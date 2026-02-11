@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Конфигурация бота через переменные окружения."""
+import os
 
 from environs import Env
 
@@ -21,9 +22,12 @@ BOT_TOKEN: str = env.str("BOT_TOKEN", "")
 ADMIN_IDS: list[int] = _parse_admin_ids(env.str("ADMIN_IDS", ""))
 
 # База данных: SQLite по умолчанию
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, 'data', 'seobot.db')
+
 DATABASE_URL: str = env.str(
     "DATABASE_URL",
-    "sqlite+aiosqlite:///./data/seobot.db",
+    f"sqlite+aiosqlite:///{DB_PATH}",
 )
 
 # Лимиты (в часах)

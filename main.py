@@ -27,9 +27,10 @@ async def main() -> None:
         logger.error("BOT_TOKEN не задан. Создайте файл .env по образцу .env.example")
         return
 
-    # Папка для SQLite
+    # Папка для SQLite - ИСПРАВЛЕНО: используем BASE_DIR из config
+    from config import BASE_DIR
     if "sqlite" in os.environ.get("DATABASE_URL", ""):
-        os.makedirs("data", exist_ok=True)
+        os.makedirs(os.path.join(BASE_DIR, "data"), exist_ok=True)
 
     await init_db()
     bot = Bot(token=BOT_TOKEN)
@@ -39,8 +40,12 @@ async def main() -> None:
     dp.update.middleware(DbSessionMiddleware())
 
     dp.include_router(user_router)
-    # Админ-роутер: только для пользователей из ADMIN_IDS
-    admin_router.outer_middleware(AdminOnlyMiddleware())
+
+    # Админ-роутер: только для пользователей из ADMIN_IDS - ИСПРАВЛЕНО для aiogram 3.x
+    # Вместо outer_middleware используем middleware для конкретных типов обновлений
+    admin_router.message.middleware(AdminOnlyMiddleware())
+    admin_router.callback_query.middleware(AdminOnlyMiddleware())
+
     dp.include_router(admin_router)
 
     try:
