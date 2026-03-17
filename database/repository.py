@@ -1,274 +1,339 @@
 # -*- coding: utf-8 -*-
-"""Репозитории для работы с БД."""
-
+"""Репозитории для SeoJob / Отзовик."""
 from datetime import datetime, timedelta
-from sqlalchemy import select, and_, update
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from decimal import Decimal
 
-from .models import User, Link, ReviewText, TrainingMessage, Task, AdminAction
-from config import YANDEX_COOLDOWN_HOURS, TWOGIS_COOLDOWN_HOURS, TRAINING_STEPS
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from config import DEFAULT_MIN_WITHDRAW, REVIEW_CHECK_DAYS
+from .models import Attempt, BalanceOperation, BotSetting, TaskItem, User, WithdrawalRequest
 
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_by_user_id(self, user_id: int) -> User | None:
-        r = await self.session.execute(select(User).where(User.user_id == user_id))
-        return r.scalar_one_or_none()
-
-    async def get_or_create(
-        self,
-        user_id: int,
-        username: str | None = None,
-        first_name: str | None = None,
-    ) -> User:
+    async def get_or_create(self, user_id: int, username: str | None, first_name: str | None) -> User:
         user = await self.get_by_user_id(user_id)
         if user:
-            if username is not None:
-                user.username = username
-            if first_name is not None:
-                user.first_name = first_name
+            user.username = username
+            user.first_name = first_name
             await self.session.flush()
             return user
-        user = User(
-            user_id=user_id,
-            username=username,
-            first_name=first_name,
-        )
+        user = User(user_id=user_id, username=username, first_name=first_name)
         self.session.add(user)
         await self.session.flush()
         return user
 
-    async def update_last_review(self, user_id: int, platform: str) -> None:
-        now = datetime.utcnow()
-        stmt = (
-            update(User)
-            .where(User.user_id == user_id)
-            .values(
-                last_yandex_review=now if platform == "yandex" else User.last_yandex_review,
-                last_2gis_review=now if platform == "2gis" else User.last_2gis_review,
-            )
-        )
-        await self.session.execute(stmt)
+    async def get_by_user_id(self, user_id: int) -> User | None:
+        result = await self.session.execute(select(User).where(User.user_id == user_id))
+        return result.scalar_one_or_none()
 
     async def get_by_username(self, username: str) -> User | None:
-        name = username.lstrip("@")
-        r = await self.session.execute(select(User).where(User.username == name))
-        return r.scalar_one_or_none()
+        result = await self.session.execute(select(User).where(User.username == username.lstrip("@")))
+        return result.scalar_one_or_none()
 
-
-class LinkRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def get_active_by_platform(self, platform: str):
-        r = await self.session.execute(
-            select(Link).where(and_(Link.platform == platform, Link.is_active == True))
-        )
-        return list(r.scalars().all())
-
-    async def get_by_id(self, link_id: int) -> Link | None:
-        r = await self.session.execute(select(Link).where(Link.id == link_id))
-        return r.scalar_one_or_none()
-
-    async def get_by_url(self, url: str) -> Link | None:
-        r = await self.session.execute(select(Link).where(Link.url == url))
-        return r.scalar_one_or_none()
-
-    async def create(self, platform: str, url: str) -> Link:
-        link = Link(platform=platform, url=url)
-        self.session.add(link)
-        await self.session.flush()
-        return link
-
-    async def set_active(self, link_id: int, is_active: bool) -> None:
-        await self.session.execute(update(Link).where(Link.id == link_id).values(is_active=is_active))
-
-    async def get_all(self):
-        r = await self.session.execute(select(Link).order_by(Link.id))
-        return list(r.scalars().all())
-
-
-class ReviewTextRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def get_active_by_link_id(self, link_id: int):
-        r = await self.session.execute(
-            select(ReviewText).where(
-                and_(ReviewText.link_id == link_id, ReviewText.is_active == True)
-            )
-        )
-        return list(r.scalars().all())
-
-    async def get_by_id(self, text_id: int) -> ReviewText | None:
-        r = await self.session.execute(select(ReviewText).where(ReviewText.id == text_id))
-        return r.scalar_one_or_none()
-
-    async def create(self, link_id: int, text: str) -> ReviewText:
-        rt = ReviewText(link_id=link_id, text=text)
-        self.session.add(rt)
-        await self.session.flush()
-        return rt
-
-    async def set_active(self, text_id: int, is_active: bool) -> None:
-        await self.session.execute(
-            update(ReviewText).where(ReviewText.id == text_id).values(is_active=is_active)
-        )
-
-
-class TrainingMessageRepository:
-    def __init__(self, session: AsyncSession):
-        self.session = session
-
-    async def get_by_step(self, step_number: int) -> TrainingMessage | None:
-        r = await self.session.execute(
-            select(TrainingMessage).where(TrainingMessage.step_number == step_number)
-        )
-        return r.scalar_one_or_none()
-
-    async def get_all_ordered(self):
-        r = await self.session.execute(
-            select(TrainingMessage).order_by(TrainingMessage.step_number)
-        )
-        return list(r.scalars().all())
-
-    async def set_text(self, step_number: int, text: str) -> TrainingMessage:
-        msg = await self.get_by_step(step_number)
-        if msg:
-            msg.text = text
+    async def set_city(self, user_id: int, city: str) -> None:
+        user = await self.get_by_user_id(user_id)
+        if user:
+            user.city = city
             await self.session.flush()
-            return msg
-        msg = TrainingMessage(step_number=step_number, text=text)
-        self.session.add(msg)
+
+    async def add_balance(self, user_id: int, amount: float) -> None:
+        user = await self.get_by_user_id(user_id)
+        if user:
+            user.balance = Decimal(user.balance) + Decimal(str(amount))
+            await self.session.flush()
+
+    async def sub_balance(self, user_id: int, amount: float) -> bool:
+        user = await self.get_by_user_id(user_id)
+        if not user:
+            return False
+        if Decimal(user.balance) < Decimal(str(amount)):
+            return False
+        user.balance = Decimal(user.balance) - Decimal(str(amount))
         await self.session.flush()
-        return msg
+        return True
 
-    async def ensure_steps_exist(self) -> None:
-        for step in range(1, TRAINING_STEPS + 1):
-            if await self.get_by_step(step) is None:
-                self.session.add(
-                    TrainingMessage(step_number=step, text=f"Шаг обучения {step}. Отредактируйте в админке.")
-                )
-        await self.session.flush()
+    async def set_blocked(self, user_id: int, value: bool) -> None:
+        user = await self.get_by_user_id(user_id)
+        if user:
+            user.is_blocked = value
+            await self.session.flush()
 
 
-class TaskRepository:
+class TaskItemRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(
-        self,
-        user_id: int,
-        link_id: int,
-        text_id: int | None,
-    ) -> Task:
-        task = Task(user_id=user_id, link_id=link_id, text_id=text_id, status="pending")
+    async def get_platforms_by_city(self, city: str) -> list[str]:
+        result = await self.session.execute(
+            select(TaskItem.platform)
+            .where(TaskItem.city == city, TaskItem.is_active == True)
+            .group_by(TaskItem.platform)
+            .order_by(TaskItem.platform)
+        )
+        return list(result.scalars().all())
+
+    async def get_active_for_city_platform(self, city: str, platform: str) -> list[TaskItem]:
+        result = await self.session.execute(
+            select(TaskItem)
+            .where(TaskItem.city == city, TaskItem.platform == platform, TaskItem.is_active == True)
+            .order_by(TaskItem.id)
+        )
+        return list(result.scalars().all())
+
+    async def get_by_id(self, task_item_id: int) -> TaskItem | None:
+        result = await self.session.execute(select(TaskItem).where(TaskItem.id == task_item_id))
+        return result.scalar_one_or_none()
+
+    async def get_all(self) -> list[TaskItem]:
+        result = await self.session.execute(select(TaskItem).order_by(TaskItem.id.desc()))
+        return list(result.scalars().all())
+
+    async def create(self, platform: str, city: str, sphere: str, price: float, instruction_url: str) -> TaskItem:
+        task = TaskItem(platform=platform, city=city, sphere=sphere, price=price, instruction_url=instruction_url)
         self.session.add(task)
         await self.session.flush()
         return task
 
-    async def get_last_pending_by_user(self, user_id: int) -> Task | None:
-        r = await self.session.execute(
-            select(Task)
-            .where(and_(Task.user_id == user_id, Task.status == "pending"))
-            .order_by(Task.created_at.desc())
-            .limit(1)
-            .options(
-                selectinload(Task.link),
-                selectinload(Task.review_text),
-            )
-        )
-        return r.scalar_one_or_none()
-
-    async def get_by_id(self, task_id: int) -> Task | None:
-        r = await self.session.execute(
-            select(Task)
-            .where(Task.id == task_id)
-            .options(
-                selectinload(Task.user),
-                selectinload(Task.link),
-                selectinload(Task.review_text),
-            )
-        )
-        return r.scalar_one_or_none()
-
-    async def get_pending(self):
-        r = await self.session.execute(
-            select(Task)
-            .where(Task.status == "pending")
-            .order_by(Task.created_at.desc())
-            .options(
-                selectinload(Task.user),
-                selectinload(Task.link),
-                selectinload(Task.review_text),
-            )
-        )
-        return list(r.unique().scalars().all())
-
-    async def get_approved_unpaid(self):
-        r = await self.session.execute(
-            select(Task)
-            .where(Task.status == "approved")
-            .order_by(Task.approved_at.desc())
-            .options(
-                selectinload(Task.user),
-                selectinload(Task.link),
-                selectinload(Task.review_text),
-            )
-        )
-        return list(r.unique().scalars().all())
-
-    async def approve(self, task_id: int) -> Task | None:
-        task = await self.get_by_id(task_id)
-        if not task or task.status != "pending":
-            return None
-        task.status = "approved"
-        task.approved_at = datetime.utcnow()
+    async def update_field(self, task_item_id: int, field_name: str, value: str) -> bool:
+        task = await self.get_by_id(task_item_id)
+        if not task or not hasattr(task, field_name):
+            return False
+        if field_name == "price":
+            setattr(task, field_name, Decimal(value))
+        else:
+            setattr(task, field_name, value)
         await self.session.flush()
-        return task
+        return True
 
-    async def reject(self, task_id: int) -> Task | None:
-        task = await self.get_by_id(task_id)
-        if not task or task.status != "pending":
-            return None
-        task.status = "rejected"
+    async def toggle_active(self, task_item_id: int) -> bool:
+        task = await self.get_by_id(task_item_id)
+        if not task:
+            return False
+        task.is_active = not task.is_active
         await self.session.flush()
-        return task
+        return True
 
-    async def mark_paid(self, task_id: int) -> Task | None:
-        task = await self.get_by_id(task_id)
-        if not task or task.status != "approved":
-            return None
-        task.status = "paid"
-        task.paid_at = datetime.utcnow()
+    async def delete(self, task_item_id: int) -> bool:
+        task = await self.get_by_id(task_item_id)
+        if not task:
+            return False
+        await self.session.delete(task)
         await self.session.flush()
-        return task
-
-    async def update_submission(self, task_id: int, screenshot_file_id: str, payment_details: str) -> Task | None:
-        task = await self.get_by_id(task_id)
-        if not task or task.status != "pending":
-            return None
-        task.screenshot_file_id = screenshot_file_id
-        task.payment_details = payment_details
-        await self.session.flush()
-        return task
-
-    def can_take_task(self, last_review: datetime | None, platform: str) -> bool:
-        if last_review is None:
-            return True
-        hours = YANDEX_COOLDOWN_HOURS if platform == "yandex" else TWOGIS_COOLDOWN_HOURS
-        return datetime.utcnow() - last_review >= timedelta(hours=hours)
+        return True
 
 
-class AdminActionRepository:
+class AttemptRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def log(self, admin_id: int, action_type: str, target_id: int | None = None) -> None:
-        self.session.add(
-            AdminAction(admin_id=admin_id, action_type=action_type, target_id=target_id)
-        )
+    async def create(self, user_id: int, task_item_id: int) -> Attempt:
+        attempt = Attempt(user_id=user_id, task_item_id=task_item_id, status="waiting_approval")
+        self.session.add(attempt)
         await self.session.flush()
+        return attempt
+
+    async def get_by_id(self, attempt_id: int) -> Attempt | None:
+        result = await self.session.execute(select(Attempt).where(Attempt.id == attempt_id))
+        return result.scalar_one_or_none()
+
+    async def get_last_by_user_status(self, user_id: int, status: str) -> Attempt | None:
+        result = await self.session.execute(
+            select(Attempt)
+            .where(Attempt.user_id == user_id, Attempt.status == status)
+            .order_by(Attempt.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def set_account_screenshot(self, attempt_id: int, file_id: str) -> None:
+        attempt = await self.get_by_id(attempt_id)
+        if attempt:
+            attempt.account_screenshot_file_id = file_id
+            attempt.status = "login_screenshot"
+            await self.session.flush()
+
+    async def approve(self, attempt_id: int) -> Attempt | None:
+        attempt = await self.get_by_id(attempt_id)
+        if attempt:
+            attempt.status = "approved"
+            await self.session.flush()
+        return attempt
+
+    async def decline(self, attempt_id: int, reason: str) -> Attempt | None:
+        attempt = await self.get_by_id(attempt_id)
+        if attempt:
+            attempt.status = "declined"
+            attempt.decline_reason = reason
+            await self.session.flush()
+        return attempt
+
+    async def cancel(self, attempt_id: int) -> None:
+        attempt = await self.get_by_id(attempt_id)
+        if attempt:
+            attempt.status = "canceled"
+            await self.session.flush()
+
+    async def submit_review(self, attempt_id: int, file_id: str) -> Attempt | None:
+        attempt = await self.get_by_id(attempt_id)
+        if not attempt:
+            return None
+        attempt.review_screenshot_file_id = file_id
+        attempt.status = "review_submitted"
+        attempt.submitted_at = datetime.utcnow()
+        attempt.check_after = attempt.submitted_at + timedelta(days=REVIEW_CHECK_DAYS)
+        await self.session.flush()
+        return attempt
+
+    async def complete(self, attempt_id: int) -> Attempt | None:
+        attempt = await self.get_by_id(attempt_id)
+        if attempt:
+            attempt.status = "completed"
+            await self.session.flush()
+        return attempt
+
+    async def reject(self, attempt_id: int, reason: str) -> Attempt | None:
+        attempt = await self.get_by_id(attempt_id)
+        if attempt:
+            attempt.status = "rejected"
+            attempt.reject_reason = reason
+            await self.session.flush()
+        return attempt
+
+    async def due_for_review_check(self) -> list[Attempt]:
+        result = await self.session.execute(
+            select(Attempt).where(
+                Attempt.status == "review_submitted",
+                Attempt.check_after.is_not(None),
+                Attempt.check_after < datetime.utcnow(),
+                Attempt.review_check_requested == False,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def mark_review_check_requested(self, attempt_id: int) -> None:
+        attempt = await self.get_by_id(attempt_id)
+        if attempt:
+            attempt.review_check_requested = True
+            await self.session.flush()
+
+    async def completed_count_by_user(self, user_id: int) -> int:
+        result = await self.session.execute(
+            select(func.count()).select_from(Attempt).where(Attempt.user_id == user_id, Attempt.status == "completed")
+        )
+        return int(result.scalar() or 0)
+
+
+class BalanceRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def add_operation(self, user_id: int, amount: float, operation_type: str, comment: str | None = None) -> None:
+        op = BalanceOperation(
+            user_id=user_id,
+            amount=Decimal(str(amount)),
+            operation_type=operation_type,
+            comment=comment,
+        )
+        self.session.add(op)
+        await self.session.flush()
+
+    async def get_last_operations(self, user_id: int, limit: int = 10) -> list[BalanceOperation]:
+        result = await self.session.execute(
+            select(BalanceOperation)
+            .where(BalanceOperation.user_id == user_id)
+            .order_by(BalanceOperation.id.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+
+class WithdrawalRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def create(self, user_id: int, amount: float, requisites: str) -> WithdrawalRequest:
+        item = WithdrawalRequest(user_id=user_id, amount=Decimal(str(amount)), requisites=requisites, status="pending")
+        self.session.add(item)
+        await self.session.flush()
+        return item
+
+    async def get_by_id(self, withdrawal_id: int) -> WithdrawalRequest | None:
+        result = await self.session.execute(select(WithdrawalRequest).where(WithdrawalRequest.id == withdrawal_id))
+        return result.scalar_one_or_none()
+
+    async def get_pending(self) -> list[WithdrawalRequest]:
+        result = await self.session.execute(
+            select(WithdrawalRequest).where(WithdrawalRequest.status == "pending").order_by(WithdrawalRequest.id.desc())
+        )
+        return list(result.scalars().all())
+
+    async def mark_paid(self, withdrawal_id: int) -> WithdrawalRequest | None:
+        item = await self.get_by_id(withdrawal_id)
+        if item:
+            item.status = "paid"
+            item.processed_at = datetime.utcnow()
+            await self.session.flush()
+        return item
+
+    async def mark_rejected(self, withdrawal_id: int) -> WithdrawalRequest | None:
+        item = await self.get_by_id(withdrawal_id)
+        if item:
+            item.status = "rejected"
+            item.processed_at = datetime.utcnow()
+            await self.session.flush()
+        return item
+
+
+class SettingsRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get(self) -> BotSetting:
+        item = await self.session.get(BotSetting, 1)
+        if item:
+            return item
+        item = BotSetting(id=1, min_withdraw_amount=DEFAULT_MIN_WITHDRAW)
+        self.session.add(item)
+        await self.session.flush()
+        return item
+
+    async def set_field(self, field_name: str, value) -> None:
+        item = await self.get()
+        setattr(item, field_name, value)
+        await self.session.flush()
+
+
+class StatsRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def summary(self) -> dict:
+        users_total = int((await self.session.execute(select(func.count()).select_from(User))).scalar() or 0)
+        users_new_week = int(
+            (
+                await self.session.execute(
+                    select(func.count()).select_from(User).where(User.registered_at > datetime.utcnow() - timedelta(days=7))
+                )
+            ).scalar()
+            or 0
+        )
+        tasks_completed = int(
+            (await self.session.execute(select(func.count()).select_from(Attempt).where(Attempt.status == "completed"))).scalar() or 0
+        )
+        total_paid = (
+            await self.session.execute(
+                select(func.coalesce(func.sum(WithdrawalRequest.amount), 0)).where(WithdrawalRequest.status == "paid")
+            )
+        ).scalar()
+        total_balances = (await self.session.execute(select(func.coalesce(func.sum(User.balance), 0)))).scalar()
+        return {
+            "users_total": users_total,
+            "users_new_week": users_new_week,
+            "tasks_completed": tasks_completed,
+            "total_paid": float(total_paid or 0),
+            "total_balances": float(total_balances or 0),
+        }

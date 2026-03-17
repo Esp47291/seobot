@@ -1,53 +1,43 @@
 # -*- coding: utf-8 -*-
-"""Клавиатуры для пользователя."""
-
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-BTN_NEXT = "Далее ▶"
-BTN_TAKE_TASK = "Взять задание"
-BTN_SENT_REVIEW = "Я написал отзыв, отправить на проверку"
-CALLBACK_NEXT = "training_next"
-CALLBACK_TAKE = "take_task"
-CALLBACK_SENT = "sent_review"
+"""Клавиатуры пользовательской части."""
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 
-def kb_next_training(step: int, total: int) -> InlineKeyboardMarkup:
-    if step >= total:
-        return InlineKeyboardMarkup(inline_keyboard=[])
+def main_menu() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="✍️ Приступить к заданию")],
+            [KeyboardButton(text="💰 Личный кабинет / Баланс"), KeyboardButton(text="💸 Вывести средства")],
+            [KeyboardButton(text="👥 Реферальная программа"), KeyboardButton(text="🆘 Помощь")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def platforms_kb(platforms: list[str]) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=p, callback_data=f"platform:{p}")] for p in platforms]
+    rows.append([InlineKeyboardButton(text="🔙 В главное меню", callback_data="to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def task_card_kb(task_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=BTN_NEXT, callback_data=f"{CALLBACK_NEXT}:{step}")]
+            [InlineKeyboardButton(text="✅ Начать задание", callback_data=f"start_task:{task_id}")],
+            [InlineKeyboardButton(text="🔜 Следующее задание", callback_data=f"next_task:{task_id}")],
+            [InlineKeyboardButton(text="🚫 Не интересно", callback_data=f"skip_task:{task_id}")],
+            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="to_menu")],
         ]
     )
 
 
-def kb_after_training() -> InlineKeyboardMarkup:
+def cancel_attempt_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=BTN_TAKE_TASK, callback_data=CALLBACK_TAKE)]
-        ]
+        inline_keyboard=[[InlineKeyboardButton(text="🔙 Отменить и в меню", callback_data="cancel_attempt")]]
     )
 
 
-def kb_take_task() -> InlineKeyboardMarkup:
+def operations_history_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=BTN_TAKE_TASK, callback_data=CALLBACK_TAKE)]
-        ]
-    )
-
-
-def kb_sent_for_review() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=BTN_SENT_REVIEW, callback_data=CALLBACK_SENT)]
-        ]
-    )
-
-
-def kb_copy_text() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Копировать текст", callback_data="copy_text")]
-        ]
+        inline_keyboard=[[InlineKeyboardButton(text="📊 История операций", callback_data="cabinet_history")]]
     )

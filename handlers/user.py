@@ -1,241 +1,353 @@
 # -*- coding: utf-8 -*-
-"""Хендлеры пользователя: старт, обучение, взятие задания, отправка на проверку."""
+"""Пользовательские хендлеры SeoJob / Отзовик."""
+from decimal import Decimal
 
-import random
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 
+from config import ADMIN_IDS, SUPPORT_URL
 from database import (
+    AttemptRepository,
+    BalanceRepository,
+    SettingsRepository,
+    TaskItemRepository,
     UserRepository,
-    LinkRepository,
-    ReviewTextRepository,
-    TrainingMessageRepository,
-    TaskRepository,
+    WithdrawalRepository,
 )
-from keyboards.user import (
-    kb_next_training,
-    kb_after_training,
-    kb_take_task,
-    kb_sent_for_review,
-    CALLBACK_NEXT,
-    CALLBACK_TAKE,
-    CALLBACK_SENT,
-)
+from keyboards.admin import moderation_kb, withdraw_kb
+from keyboards.user import cancel_attempt_kb, main_menu, operations_history_kb, platforms_kb, task_card_kb
 from utils.fsm import UserFSM
-from config import TRAINING_STEPS
 
 router = Router(name="user")
 
 
-def _platform_label(platform: str) -> str:
-    return "Яндекс Карты" if platform == "yandex" else "2ГИС"
+async def _show_task_card(message: Message, state: FSMContext, task_ids: list[int], index: int, session):
+    task_repo = TaskItemRepository(session)
+    task = await task_repo.get_by_id(task_ids[index])
+    if not task:
+        await message.answer("Задание не найдено.")
+        return
+    await state.update_data(task_ids=task_ids, task_index=index)
+    text = (
+        f"Платформа: {task.platform}\n"
+        f"Город: {task.city}\n"
+        f"Сфера: {task.sphere}\n"
+        f"Вознаграждение: {float(task.price):.2f} руб."
+    )
+    await message.answer(text, reply_markup=task_card_kb(task.id))
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, **data):
+async def start_cmd(message: Message, state: FSMContext, **data):
     await state.clear()
     session = data["session"]
-    repo = UserRepository(session)
-    user = await repo.get_or_create(
+    user_repo = UserRepository(session)
+    settings_repo = SettingsRepository(session)
+    user = await user_repo.get_or_create(
         user_id=message.from_user.id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
     )
-    training_repo = TrainingMessageRepository(session)
-    await training_repo.ensure_steps_exist()
-    first = await training_repo.get_by_step(1)
-    if not first:
-        await message.answer("Настройте обучение в админ-панели.")
+    settings = await settings_repo.get()
+    if user.is_blocked:
+        await message.answer("Ваш аккаунт заблокирован. Обратитесь в поддержку.")
         return
-    await state.set_state(UserFSM.training_step)
-    await state.update_data(training_step=1)
-    await message.answer(
-        first.text,
-        reply_markup=kb_next_training(1, TRAINING_STEPS),
-    )
+    await message.answer(settings.welcome_text, reply_markup=main_menu())
 
 
-@router.callback_query(F.data.startswith(f"{CALLBACK_NEXT}:"))
-async def training_next(cb: CallbackQuery, state: FSMContext, **data):
-    await cb.answer()
+@router.message(F.text == "✍️ Приступить к заданию")
+async def begin_tasks(message: Message, state: FSMContext, **data):
     session = data["session"]
-    step = int(cb.data.split(":")[1])
-    next_step = step + 1
-    training_repo = TrainingMessageRepository(session)
-    if next_step > TRAINING_STEPS:
-        await state.clear()
-        await cb.message.edit_text(
-            "Обучение завершено. Можете брать задание.",
-            reply_markup=kb_after_training(),
-        )
-        return
-    msg = await training_repo.get_by_step(next_step)
-    if not msg:
-        await state.clear()
-        await cb.message.edit_text("Ошибка: шаг обучения не найден.", reply_markup=kb_after_training())
-        return
-    await state.update_data(training_step=next_step)
-    await cb.message.edit_text(
-        msg.text,
-        reply_markup=kb_next_training(next_step, TRAINING_STEPS),
-    )
-
-
-@router.callback_query(F.data == CALLBACK_TAKE)
-async def take_task(cb: CallbackQuery, state: FSMContext, **data):
-    await cb.answer()
-    session = data["session"]
-    await state.clear()
-    user_id = cb.from_user.id
     user_repo = UserRepository(session)
-    user = await user_repo.get_by_user_id(user_id)
+    task_repo = TaskItemRepository(session)
+    user = await user_repo.get_by_user_id(message.from_user.id)
     if not user:
-        await cb.message.answer("Сначала нажмите /start")
+        await message.answer("Нажмите /start.")
         return
-
-    link_repo = LinkRepository(session)
-    text_repo = ReviewTextRepository(session)
-    task_repo = TaskRepository(session)
-
-    # Проверяем лимиты по платформам и выбираем доступную
-    yandex_links = await link_repo.get_active_by_platform("yandex")
-    twogis_links = await link_repo.get_active_by_platform("2gis")
-    available_links = []
-    if yandex_links and task_repo.can_take_task(user.last_yandex_review, "yandex"):
-        available_links.extend(yandex_links)
-    if twogis_links and task_repo.can_take_task(user.last_2gis_review, "2gis"):
-        available_links.extend(twogis_links)
-
-    if not available_links:
-        parts = []
-        if yandex_links and not task_repo.can_take_task(user.last_yandex_review, "yandex"):
-            parts.append("Яндекс Карты: лимит 1 раз в 24 ч.")
-        if twogis_links and not task_repo.can_take_task(user.last_2gis_review, "2gis"):
-            parts.append("2ГИС: лимит 1 раз в 2 ч.")
-        if not yandex_links and not twogis_links:
-            await cb.message.answer("Нет доступных заданий. Попробуйте позже.")
-        else:
-            await cb.message.answer(
-                "Сейчас вы не можете взять задание:\n" + "\n".join(parts) + "\n\nПопробуйте позже."
-            )
+    if not user.city:
+        await state.set_state(UserFSM.choosing_city)
+        await message.answer("Напишите ваш город:")
         return
-
-    link = random.choice(available_links)
-    texts = await text_repo.get_active_by_link_id(link.id)
-    if not texts:
-        await cb.message.answer(
-            "У выбранной ссылки нет текстов отзывов. Попробуйте позже или сообщите админу."
-        )
+    platforms = await task_repo.get_platforms_by_city(user.city)
+    if not platforms:
+        await message.answer("Для вашего города пока нет активных заданий.")
         return
-    review_text = random.choice(texts)
-    task = await task_repo.create(user_id=user_id, link_id=link.id, text_id=review_text.id)
-    await state.set_state(UserFSM.waiting_screenshot)
-    await state.update_data(task_id=task.id)
-
-    platform_label = _platform_label(link.platform)
-    text_for_user = (
-        f"📌 Платформа: {platform_label}\n\n"
-        f"🔗 Ссылка: {link.url}\n\n"
-        f"📝 Текст отзыва:\n\n{review_text.text}"
-    )
-    await cb.message.answer(
-        text_for_user,
-        reply_markup=kb_sent_for_review(),
-    )
+    await state.set_state(UserFSM.choosing_platform)
+    await message.answer("Выберите платформу:", reply_markup=platforms_kb(platforms))
 
 
-@router.callback_query(F.data == CALLBACK_SENT)
-async def sent_review(cb: CallbackQuery, state: FSMContext):
-    await cb.answer()
-    data = await state.get_data()
-    if not data.get("task_id"):
-        await cb.message.answer("Задание не найдено. Нажмите «Взять задание» заново.")
+@router.message(UserFSM.choosing_city, F.text)
+async def choose_city(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    user_repo = UserRepository(session)
+    task_repo = TaskItemRepository(session)
+    await user_repo.set_city(message.from_user.id, message.text.strip())
+    platforms = await task_repo.get_platforms_by_city(message.text.strip())
+    if not platforms:
         await state.clear()
+        await message.answer("Город сохранен, но активных заданий пока нет.", reply_markup=main_menu())
         return
-    await cb.message.edit_reply_markup(reply_markup=None)
-    await state.set_state(UserFSM.waiting_screenshot)
-    await cb.message.answer("Отправьте скриншот отзыва (одним фото).")
+    await state.set_state(UserFSM.choosing_platform)
+    await message.answer("Выберите платформу:", reply_markup=platforms_kb(platforms))
 
 
-@router.message(UserFSM.waiting_screenshot, F.photo)
-async def got_screenshot(message: Message, state: FSMContext, **data):
-    file_id = message.photo[-1].file_id
-    await state.update_data(screenshot_file_id=file_id)
-    await state.set_state(UserFSM.waiting_payment_details)
-    await message.answer(
-        "Скриншот принят. Теперь отправьте реквизиты для выплаты: "
-        "номер карты, ник в Яндекс/2ГИС, телефон — в одном сообщении."
-    )
+@router.callback_query(F.data.startswith("platform:"))
+async def choose_platform(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    session = data["session"]
+    user_repo = UserRepository(session)
+    task_repo = TaskItemRepository(session)
+    user = await user_repo.get_by_user_id(cb.from_user.id)
+    platform = cb.data.split(":", 1)[1]
+    tasks = await task_repo.get_active_for_city_platform(user.city, platform)
+    if not tasks:
+        await cb.message.answer("По этой платформе нет активных заданий.")
+        return
+    task_ids = [t.id for t in tasks]
+    await _show_task_card(cb.message, state, task_ids, 0, session)
 
 
-@router.message(UserFSM.waiting_screenshot)
-async def wrong_screenshot(message: Message):
-    await message.answer("Отправьте, пожалуйста, фото (скриншот).")
-
-
-@router.message(UserFSM.waiting_payment_details, F.text)
-async def got_payment_details(message: Message, state: FSMContext, **data):
+@router.callback_query(F.data.startswith("next_task:"))
+async def next_task(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
     session = data["session"]
     state_data = await state.get_data()
-    task_id = state_data.get("task_id")
-    screenshot_file_id = state_data.get("screenshot_file_id")
-    if not task_id or not screenshot_file_id:
-        await message.answer("Ошибка. Начните заново: нажмите «Взять задание».")
-        await state.clear()
+    task_ids = state_data.get("task_ids", [])
+    if not task_ids:
         return
-    task_repo = TaskRepository(session)
-    user_repo = UserRepository(session)
+    new_index = (state_data.get("task_index", 0) + 1) % len(task_ids)
+    await _show_task_card(cb.message, state, task_ids, new_index, session)
+
+
+@router.callback_query(F.data.startswith("skip_task:"))
+async def skip_task(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer("Скрыто в текущей сессии")
+    session = data["session"]
+    state_data = await state.get_data()
+    task_ids = state_data.get("task_ids", [])
+    current_id = int(cb.data.split(":")[1])
+    filtered = [tid for tid in task_ids if tid != current_id]
+    if not filtered:
+        await cb.message.answer("Больше заданий нет.")
+        return
+    await _show_task_card(cb.message, state, filtered, 0, session)
+
+
+@router.callback_query(F.data.startswith("start_task:"))
+async def start_task(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    task_repo = TaskItemRepository(session)
+    task_id = int(cb.data.split(":")[1])
     task = await task_repo.get_by_id(task_id)
-    if not task or task.status != "pending":
-        await message.answer("Задание уже обработано или не найдено.")
+    if not task or not task.is_active:
+        await cb.message.answer("Задание недоступно.")
+        return
+    attempt = await attempt_repo.create(cb.from_user.id, task_id)
+    await state.set_state(UserFSM.waiting_account_screenshot)
+    await state.update_data(attempt_id=attempt.id)
+    await cb.message.answer(
+        f"🔍 Этап 1/3: Для допуска к заданию пришлите скриншот вашего профиля на {task.platform}, "
+        "где видно ваш никнейм и дату последнего отзыва."
+    )
+
+
+@router.message(UserFSM.waiting_account_screenshot, F.photo)
+async def got_account_screenshot(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    task_repo = TaskItemRepository(session)
+    state_data = await state.get_data()
+    attempt = await attempt_repo.get_by_id(state_data.get("attempt_id"))
+    if not attempt:
         await state.clear()
         return
-    await task_repo.update_submission(task_id, screenshot_file_id, message.text)
-    link_repo = LinkRepository(session)
-    link = await link_repo.get_by_id(task.link_id)
-    platform = link.platform if link else "?"
-    await user_repo.update_last_review(message.from_user.id, platform)
-    await state.clear()
-    await message.answer(
-        "✅ Ваш отзыв отправлен на проверку. После одобрения и выплаты вы получите уведомление."
+    file_id = message.photo[-1].file_id
+    await attempt_repo.set_account_screenshot(attempt.id, file_id)
+    task = await task_repo.get_by_id(attempt.task_item_id)
+    admin_text = (
+        f"🆕 Запрос на задание от @{message.from_user.username or message.from_user.id}\n"
+        f"Задание: {task.platform} / {task.sphere} / {task.city}\n"
+        f"Цена: {float(task.price):.2f} руб."
     )
-    # Уведомление админу отправим в main через bot — нужен bot instance. Передадим через ответ админам в admin handler при показе списка или через отдельный уведомитель.
-    # Проще: в admin handler при открытии "Непроверенные" мы просто показываем список. Реальное уведомление админу можно слать из здесь, но нужен bot. Передадим bot в data через middleware или получим из event.bot.
-    from aiogram import Bot
-    bot = message.bot
-    from config import ADMIN_IDS
     for admin_id in ADMIN_IDS:
         try:
-            await bot.send_message(
+            await message.bot.send_photo(
                 admin_id,
-                f"🆕 Новый отзыв на проверку.\n"
-                f"Задание #{task_id}, пользователь @{message.from_user.username or message.from_user.id}.",
+                file_id,
+                caption=admin_text,
+                reply_markup=moderation_kb(attempt.id, "pre"),
+            )
+        except Exception:
+            pass
+    await message.answer("Скриншот отправлен на модерацию. Ожидайте решение.")
+
+
+@router.message(UserFSM.waiting_review_screenshot, F.photo)
+async def got_review_screenshot(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    attempt_id = (await state.get_data()).get("attempt_id")
+    attempt = await attempt_repo.submit_review(attempt_id, message.photo[-1].file_id)
+    if not attempt:
+        await state.clear()
+        return
+    await state.clear()
+    await message.answer(
+        "✅ Скриншот получен. Ожидайте проверки результата. Максимальный срок проверки: 3 дня.",
+        reply_markup=main_menu(),
+    )
+
+
+@router.message(F.photo)
+async def got_review_screenshot_without_state(message: Message, **data):
+    """Поддержка кейса, когда админ допустил пользователя позже, без активного FSM-контекста."""
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    attempt = await attempt_repo.get_last_by_user_status(message.from_user.id, "approved")
+    if not attempt:
+        return
+    await attempt_repo.submit_review(attempt.id, message.photo[-1].file_id)
+    await message.answer(
+        "✅ Скриншот получен. Ожидайте проверки результата. Максимальный срок проверки: 3 дня.",
+        reply_markup=main_menu(),
+    )
+
+
+@router.callback_query(F.data == "cancel_attempt")
+async def cancel_attempt(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    attempt_id = (await state.get_data()).get("attempt_id")
+    if attempt_id:
+        await attempt_repo.cancel(attempt_id)
+    await state.clear()
+    await cb.message.answer("Попытка отменена.", reply_markup=main_menu())
+
+
+@router.message(F.text == "💰 Личный кабинет / Баланс")
+async def cabinet(message: Message, **data):
+    session = data["session"]
+    user_repo = UserRepository(session)
+    attempt_repo = AttemptRepository(session)
+    user = await user_repo.get_by_user_id(message.from_user.id)
+    completed = await attempt_repo.completed_count_by_user(message.from_user.id)
+    await message.answer(
+        f"Ваш ID: {user.user_id}\n"
+        f"Username: @{user.username or '-'}\n"
+        f"Баланс: {float(user.balance):.2f} руб.\n"
+        f"Выполнено заданий: {completed}",
+        reply_markup=operations_history_kb(),
+    )
+
+
+@router.callback_query(F.data == "cabinet_history")
+async def cabinet_history(cb: CallbackQuery, **data):
+    await cb.answer()
+    session = data["session"]
+    balance_repo = BalanceRepository(session)
+    ops = await balance_repo.get_last_operations(cb.from_user.id)
+    if not ops:
+        await cb.message.answer("История операций пуста.")
+        return
+    text = "Последние операции:\n\n" + "\n".join(
+        [f"{o.created_at:%d.%m %H:%M} | {o.operation_type} | {float(o.amount):+.2f} руб." for o in ops]
+    )
+    await cb.message.answer(text)
+
+
+@router.message(F.text == "💸 Вывести средства")
+async def withdraw_start(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    settings_repo = SettingsRepository(session)
+    user_repo = UserRepository(session)
+    settings = await settings_repo.get()
+    user = await user_repo.get_by_user_id(message.from_user.id)
+    if Decimal(user.balance) < Decimal(settings.min_withdraw_amount):
+        await message.answer(f"Минимальная сумма вывода — {settings.min_withdraw_amount} рублей.")
+        return
+    await state.set_state(UserFSM.waiting_withdraw_amount)
+    await message.answer(f"Введите сумму для вывода (доступно {float(user.balance):.2f} руб.):")
+
+
+@router.message(UserFSM.waiting_withdraw_amount, F.text)
+async def withdraw_amount(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    settings_repo = SettingsRepository(session)
+    user_repo = UserRepository(session)
+    settings = await settings_repo.get()
+    user = await user_repo.get_by_user_id(message.from_user.id)
+    try:
+        amount = Decimal(message.text.strip().replace(",", "."))
+    except Exception:
+        await message.answer("Введите число.")
+        return
+    if amount < settings.min_withdraw_amount or amount > Decimal(user.balance):
+        await message.answer("Некорректная сумма.")
+        return
+    await state.update_data(withdraw_amount=float(amount))
+    await state.set_state(UserFSM.waiting_withdraw_requisites)
+    await message.answer("Введите ваши платежные реквизиты (номер карты, кошелек и т.д.):")
+
+
+@router.message(UserFSM.waiting_withdraw_requisites, F.text)
+async def withdraw_requisites(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    wd_repo = WithdrawalRepository(session)
+    user_repo = UserRepository(session)
+    bal_repo = BalanceRepository(session)
+    amount = (await state.get_data()).get("withdraw_amount")
+    if not amount:
+        await state.clear()
+        return
+    ok = await user_repo.sub_balance(message.from_user.id, amount)
+    if not ok:
+        await state.clear()
+        await message.answer("Недостаточно средств.", reply_markup=main_menu())
+        return
+    wd = await wd_repo.create(message.from_user.id, amount, message.text.strip())
+    await bal_repo.add_operation(message.from_user.id, -amount, "withdraw_request", f"Заявка #{wd.id}")
+    await state.clear()
+    await message.answer(f"✅ Заявка на вывод {amount:.2f} руб. создана. Ожидайте выплаты.", reply_markup=main_menu())
+    for admin_id in ADMIN_IDS:
+        try:
+            await message.bot.send_message(
+                admin_id,
+                f"💰 Заявка на вывод!\n"
+                f"От: @{message.from_user.username or message.from_user.id} (ID: {message.from_user.id})\n"
+                f"Сумма: {amount:.2f} руб.\n"
+                f"Реквизиты: {message.text.strip()}",
+                reply_markup=withdraw_kb(wd.id),
             )
         except Exception:
             pass
 
 
-@router.message(UserFSM.waiting_payment_details)
-async def wrong_payment_details(message: Message):
-    await message.answer("Отправьте реквизиты текстом.")
+@router.message(F.text == "👥 Реферальная программа")
+async def referral_stub(message: Message):
+    await message.answer("Раздел в разработке.")
 
 
-# Главное меню после обучения: кнопка "Взять задание"
-@router.message(F.text == "Взять задание")
-async def menu_take_task(message: Message, state: FSMContext, **data):
+@router.message(F.text == "🆘 Помощь")
+async def help_menu(message: Message, **data):
     session = data["session"]
+    settings_repo = SettingsRepository(session)
+    settings = await settings_repo.get()
+    await message.answer(f"{settings.help_text}\n{SUPPORT_URL}")
+
+
+@router.callback_query(F.data == "to_menu")
+async def to_menu(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
     await state.clear()
-    user_repo = UserRepository(session)
-    user = await user_repo.get_by_user_id(message.from_user.id)
-    if not user:
-        await message.answer("Нажмите /start для начала.")
-        return
-    await message.answer("Нажмите кнопку ниже:", reply_markup=kb_take_task())
+    await cb.message.answer("Главное меню:", reply_markup=main_menu())
 
 
-# Копировать текст — отправляем текст отдельным сообщением (в Telegram нельзя копировать из бота в буфер)
-@router.callback_query(F.data == "copy_text")
-async def copy_text(cb: CallbackQuery):
-    await cb.answer("Текст уже в сообщении выше — выделите и скопируйте.")
+@router.message(UserFSM.waiting_account_screenshot)
+@router.message(UserFSM.waiting_review_screenshot)
+async def wrong_photo(message: Message):
+    await message.answer("Пожалуйста, отправьте скриншот изображением.")

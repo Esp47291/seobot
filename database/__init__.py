@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 from .base import Base, get_async_session, init_db
-from .models import User, Link, ReviewText, TrainingMessage, Task, AdminAction
+from .models import User, TaskItem, Attempt, WithdrawalRequest, BalanceOperation, BotSetting
 from .repository import (
     UserRepository,
-    LinkRepository,
-    ReviewTextRepository,
-    TrainingMessageRepository,
-    TaskRepository,
-    AdminActionRepository,
+    TaskItemRepository,
+    AttemptRepository,
+    WithdrawalRepository,
+    BalanceRepository,
+    SettingsRepository,
+    StatsRepository,
 )
 
 __all__ = [
@@ -15,15 +16,16 @@ __all__ = [
     "get_async_session",
     "init_db",
     "User",
-    "Link",
-    "ReviewText",
-    "TrainingMessage",
-    "Task",
-    "AdminAction",
+    "TaskItem",
+    "Attempt",
+    "WithdrawalRequest",
+    "BalanceOperation",
+    "BotSetting",
     "UserRepository",
-    "LinkRepository",
-    "ReviewTextRepository",
-    "TrainingMessageRepository",
-    "TaskRepository",
-    "AdminActionRepository",
+    "TaskItemRepository",
+    "AttemptRepository",
+    "WithdrawalRepository",
+    "BalanceRepository",
+    "SettingsRepository",
+    "StatsRepository",
 ]

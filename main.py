@@ -14,6 +14,7 @@ from config import BOT_TOKEN
 from database import init_db
 from middlewares import DbSessionMiddleware, AdminOnlyMiddleware
 from handlers import user_router, admin_router
+from services.review_scheduler import start_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,11 +48,13 @@ async def main() -> None:
     admin_router.callback_query.middleware(AdminOnlyMiddleware())
 
     dp.include_router(admin_router)
+    scheduler = start_scheduler(bot)
 
     try:
         logger.info("Бот запущен")
         await dp.start_polling(bot)
     finally:
+        scheduler.shutdown(wait=False)
         await bot.session.close()
 
 
