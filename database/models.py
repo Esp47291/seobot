@@ -91,3 +91,23 @@ class BotSetting(Base):
         default="Поддержка: напишите в чат поддержки.",
     )
     min_withdraw_amount: Mapped[int] = mapped_column(Integer, default=20)
+
+    # Минимальная оплата за отзыв по платформам
+    min_review_price_yandex: Mapped[int] = mapped_column(Integer, default=130)
+    min_review_price_google: Mapped[int] = mapped_column(Integer, default=35)
+    min_review_price_2gis: Mapped[int] = mapped_column(Integer, default=12)
+
+
+class Referral(Base):
+    """
+    Связь реферала 1 уровня:
+    - referrer_user_id: кто пригласил
+    - referee_user_id: приглашенный (становится рефералом 1 уровня навсегда)
+    """
+
+    __tablename__ = "referrals"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    referrer_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    referee_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

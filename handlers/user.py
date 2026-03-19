@@ -11,6 +11,7 @@ from config import ADMIN_IDS, SUPPORT_URL
 from database import (
     AttemptRepository,
     BalanceRepository,
+    ReferralRepository,
     SettingsRepository,
     TaskItemRepository,
     UserRepository,
@@ -20,19 +21,30 @@ from keyboards.admin import moderation_kb, withdraw_kb
 from keyboards.user import cancel_attempt_kb, main_menu, operations_history_kb, platforms_kb, task_card_kb
 from utils.fsm import UserFSM
 
+BLOCKED_TEXT = (
+    "вы заблокированы по решению администрации, для разблокировки обратитесь к владельцу - @Exxzest"
+)
+
 router = Router(name="user")
 
 
-async def _show_task_card(message: Message, state: FSMContext, task_ids: list[int], index: int, session):
+async def _show_task_card(
+    message: Message,
+    state: FSMContext,
+    task_ids: list[int],
+    index: int,
+    session,
+    city_display: str,
+):
     task_repo = TaskItemRepository(session)
     task = await task_repo.get_by_id(task_ids[index])
     if not task:
         await message.answer("Задание не найдено.")
         return
-    await state.update_data(task_ids=task_ids, task_index=index)
+    await state.update_data(task_ids=task_ids, task_index=index, city_display=city_display)
     text = (
         f"Платформа: {task.platform}\n"
-        f"Город: {task.city}\n"
+        f"Город: {city_display}\n"
         f"Сфера: {task.sphere}\n"
         f"Вознаграждение: {float(task.price):.2f} руб."
     )
@@ -45,15 +57,38 @@ async def start_cmd(message: Message, state: FSMContext, **data):
     session = data["session"]
     user_repo = UserRepository(session)
     settings_repo = SettingsRepository(session)
-    user = await user_repo.get_or_create(
+    user, created = await user_repo.get_or_create(
         user_id=message.from_user.id,
         username=message.from_user.username,
         first_name=message.from_user.first_name,
     )
     settings = await settings_repo.get()
     if user.is_blocked:
-        await message.answer("Ваш аккаунт заблокирован. Обратитесь в поддержку.")
+        await message.answer(BLOCKED_TEXT, reply_markup=main_menu())
         return
+
+    # Deep-link реферал: /start <referrer_user_id>
+    # Telegram deep link вида: https://t.me/<bot>?start=<payload>
+    # приходит как команду "/start <payload>"
+    try:
+        text = message.text or ""
+        parts = text.split(maxsplit=1)
+        if len(parts) == 2:
+            payload = parts[1].strip()
+            if payload.isdigit():
+                referrer_id = int(payload)
+                # Ставим 1 уровень только при первом входе пользователя в бота
+                # (иначе он мог уже раньше зайти без реферала).
+                if created:
+                    ref_repo = ReferralRepository(session)
+                    await ref_repo.set_referrer_if_first_time(
+                        referee_user_id=message.from_user.id,
+                        referrer_user_id=referrer_id,
+                    )
+    except Exception:
+        # рефералы — бонус. Ошибки парсинга не ломают регистрацию пользователя
+        pass
+
     await message.answer(settings.welcome_text, reply_markup=main_menu())
 
 
@@ -106,7 +141,7 @@ async def choose_platform(cb: CallbackQuery, state: FSMContext, **data):
         await cb.message.answer("По этой платформе нет активных заданий.")
         return
     task_ids = [t.id for t in tasks]
-    await _show_task_card(cb.message, state, task_ids, 0, session)
+    await _show_task_card(cb.message, state, task_ids, 0, session, city_display=user.city or "-")
 
 
 @router.callback_query(F.data.startswith("next_task:"))
@@ -118,7 +153,8 @@ async def next_task(cb: CallbackQuery, state: FSMContext, **data):
     if not task_ids:
         return
     new_index = (state_data.get("task_index", 0) + 1) % len(task_ids)
-    await _show_task_card(cb.message, state, task_ids, new_index, session)
+    city_display = state_data.get("city_display") or "-"
+    await _show_task_card(cb.message, state, task_ids, new_index, session, city_display=city_display)
 
 
 @router.callback_query(F.data.startswith("skip_task:"))
@@ -132,7 +168,8 @@ async def skip_task(cb: CallbackQuery, state: FSMContext, **data):
     if not filtered:
         await cb.message.answer("Больше заданий нет.")
         return
-    await _show_task_card(cb.message, state, filtered, 0, session)
+    city_display = state_data.get("city_display") or "-"
+    await _show_task_card(cb.message, state, filtered, 0, session, city_display=city_display)
 
 
 @router.callback_query(F.data.startswith("start_task:"))
@@ -168,9 +205,12 @@ async def got_account_screenshot(message: Message, state: FSMContext, **data):
     file_id = message.photo[-1].file_id
     await attempt_repo.set_account_screenshot(attempt.id, file_id)
     task = await task_repo.get_by_id(attempt.task_item_id)
+    user_repo = UserRepository(session)
+    user = await user_repo.get_by_user_id(message.from_user.id)
+    city_display = user.city if user and user.city else "-"
     admin_text = (
         f"🆕 Запрос на задание от @{message.from_user.username or message.from_user.id}\n"
-        f"Задание: {task.platform} / {task.sphere} / {task.city}\n"
+        f"Задание: {task.platform} / {task.sphere} / {city_display}\n"
         f"Цена: {float(task.price):.2f} руб."
     )
     for admin_id in ADMIN_IDS:
@@ -328,8 +368,28 @@ async def withdraw_requisites(message: Message, state: FSMContext, **data):
 
 
 @router.message(F.text == "👥 Реферальная программа")
-async def referral_stub(message: Message):
-    await message.answer("Раздел в разработке.")
+async def referral_program(message: Message, **data):
+    session = data["session"]
+    ref_repo = ReferralRepository(session)
+    income_total = await ref_repo.get_total_referral_income(message.from_user.id)
+
+    me = await message.bot.get_me()
+    bot_username = me.username or ""
+    referral_link = (
+        f"https://t.me/{bot_username}?start={message.from_user.id}" if bot_username else "—"
+    )
+
+    await message.answer(
+        "РЕФЕРАЛЬНАЯ ПРОГРАММА\n\n"
+        "❗️Реферал 1 уровня - это человек, который впервые заходит в бота по вашей ссылке. "
+        "Когда человек зайдёт в бота по вашей ссылке, он навсегда становится вашим рефералом 1 уровня.\n"
+        "- Когда ваш Реферал 1 уровня получает выплату за задание вы получаете 20% от его заработка на ваш баланс.\n\n"
+        "❗️Реферал 2 уровня - это тот человек, который впервые заходит в бота по ссылке вашего Реферала 1 уровня.\n"
+        "- Когда ваш Реферал 2 уровня получает выплату за задание вы получаете 5% от его заработка на ваш баланс.\n\n"
+        "✅ Приглашайте новых пользователей и получайте пассивный доход от их заработка!\n\n"
+        f"👁‍🗨 Ссылка для привлечения рефералов: {referral_link}\n\n"
+        f"Доход заработанный с рефераллов всего: {income_total:.2f} руб."
+    )
 
 
 @router.message(F.text == "🆘 Помощь")

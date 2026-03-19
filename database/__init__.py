@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from .base import Base, get_async_session, init_db
-from .models import User, TaskItem, Attempt, WithdrawalRequest, BalanceOperation, BotSetting
+from .models import User, TaskItem, Attempt, WithdrawalRequest, BalanceOperation, BotSetting, Referral
 from .repository import (
     UserRepository,
     TaskItemRepository,
@@ -9,6 +9,7 @@ from .repository import (
     BalanceRepository,
     SettingsRepository,
     StatsRepository,
+    ReferralRepository,
 )
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "WithdrawalRequest",
     "BalanceOperation",
     "BotSetting",
+    "Referral",
     "UserRepository",
     "TaskItemRepository",
     "AttemptRepository",
@@ -28,4 +30,5 @@ __all__ = [
     "BalanceRepository",
     "SettingsRepository",
     "StatsRepository",
+    "ReferralRepository",
 ]

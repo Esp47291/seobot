@@ -17,6 +17,16 @@ def _parse_admin_ids(value: str) -> list[int]:
 BOT_TOKEN: str = env.str("BOT_TOKEN", "")
 ADMIN_IDS: list[int] = _parse_admin_ids(env.str("ADMIN_IDS", ""))
 SUPPORT_URL: str = env.str("SUPPORT_URL", "https://t.me/")
+PROXY_URL: str = env.str("PROXY_URL", "")
+
+# Если PROXY_URL не задан в .env, попробуем взять из переменных окружения.
+# Примеры:
+# HTTP_PROXY=http://127.0.0.1:8888
+# HTTPS_PROXY=http://127.0.0.1:8888
+if not PROXY_URL:
+    PROXY_URL = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+if not PROXY_URL:
+    PROXY_URL = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "data", "seobot.db")

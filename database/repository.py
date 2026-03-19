@@ -3,28 +3,28 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import DEFAULT_MIN_WITHDRAW, REVIEW_CHECK_DAYS
-from .models import Attempt, BalanceOperation, BotSetting, TaskItem, User, WithdrawalRequest
+from .models import Attempt, BalanceOperation, BotSetting, Referral, TaskItem, User, WithdrawalRequest
 
 
 class UserRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def get_or_create(self, user_id: int, username: str | None, first_name: str | None) -> User:
+    async def get_or_create(self, user_id: int, username: str | None, first_name: str | None) -> tuple[User, bool]:
         user = await self.get_by_user_id(user_id)
         if user:
             user.username = username
             user.first_name = first_name
             await self.session.flush()
-            return user
+            return user, False
         user = User(user_id=user_id, username=username, first_name=first_name)
         self.session.add(user)
         await self.session.flush()
-        return user
+        return user, True
 
     async def get_by_user_id(self, user_id: int) -> User | None:
         result = await self.session.execute(select(User).where(User.user_id == user_id))
@@ -70,7 +70,10 @@ class TaskItemRepository:
     async def get_platforms_by_city(self, city: str) -> list[str]:
         result = await self.session.execute(
             select(TaskItem.platform)
-            .where(TaskItem.city == city, TaskItem.is_active == True)
+            .where(
+                TaskItem.is_active == True,
+                or_(TaskItem.city == city, TaskItem.city == "*"),
+            )
             .group_by(TaskItem.platform)
             .order_by(TaskItem.platform)
         )
@@ -79,7 +82,11 @@ class TaskItemRepository:
     async def get_active_for_city_platform(self, city: str, platform: str) -> list[TaskItem]:
         result = await self.session.execute(
             select(TaskItem)
-            .where(TaskItem.city == city, TaskItem.platform == platform, TaskItem.is_active == True)
+            .where(
+                TaskItem.platform == platform,
+                TaskItem.is_active == True,
+                or_(TaskItem.city == city, TaskItem.city == "*"),
+            )
             .order_by(TaskItem.id)
         )
         return list(result.scalars().all())
@@ -93,7 +100,19 @@ class TaskItemRepository:
         return list(result.scalars().all())
 
     async def create(self, platform: str, city: str, sphere: str, price: float, instruction_url: str) -> TaskItem:
-        task = TaskItem(platform=platform, city=city, sphere=sphere, price=price, instruction_url=instruction_url)
+        # Минимальная цена в зависимости от платформы
+        settings = await SettingsRepository(self.session).get()
+        min_price = self._min_price_for_platform(platform, settings)
+        if min_price is not None and price < min_price:
+            raise ValueError(f"Цена для платформы '{platform}' не может быть ниже {min_price} руб.")
+
+        task = TaskItem(
+            platform=platform,
+            city=city,
+            sphere=sphere,
+            price=price,
+            instruction_url=instruction_url,
+        )
         self.session.add(task)
         await self.session.flush()
         return task
@@ -103,11 +122,25 @@ class TaskItemRepository:
         if not task or not hasattr(task, field_name):
             return False
         if field_name == "price":
-            setattr(task, field_name, Decimal(value))
+            settings = await SettingsRepository(self.session).get()
+            min_price = self._min_price_for_platform(task.platform, settings)
+            new_price = Decimal(value)
+            if min_price is not None and new_price < Decimal(str(min_price)):
+                return False
+            setattr(task, field_name, new_price)
         else:
             setattr(task, field_name, value)
         await self.session.flush()
         return True
+
+    def _min_price_for_platform(self, platform: str, settings: BotSetting) -> int | None:
+        if platform == "Яндекс карты":
+            return int(settings.min_review_price_yandex)
+        if platform == "Google карты":
+            return int(settings.min_review_price_google)
+        if platform == "2ГИС":
+            return int(settings.min_review_price_2gis)
+        return None
 
     async def toggle_active(self, task_item_id: int) -> bool:
         task = await self.get_by_id(task_item_id)
@@ -190,9 +223,13 @@ class AttemptRepository:
 
     async def complete(self, attempt_id: int) -> Attempt | None:
         attempt = await self.get_by_id(attempt_id)
-        if attempt:
-            attempt.status = "completed"
-            await self.session.flush()
+        if not attempt:
+            return None
+        # Чтобы избежать двойных начислений при повторном нажатии
+        if attempt.status != "review_submitted":
+            return None
+        attempt.status = "completed"
+        await self.session.flush()
         return attempt
 
     async def reject(self, attempt_id: int, reason: str) -> Attempt | None:
@@ -296,7 +333,13 @@ class SettingsRepository:
         item = await self.session.get(BotSetting, 1)
         if item:
             return item
-        item = BotSetting(id=1, min_withdraw_amount=DEFAULT_MIN_WITHDRAW)
+        item = BotSetting(
+            id=1,
+            min_withdraw_amount=DEFAULT_MIN_WITHDRAW,
+            min_review_price_yandex=130,
+            min_review_price_google=35,
+            min_review_price_2gis=12,
+        )
         self.session.add(item)
         await self.session.flush()
         return item
@@ -337,3 +380,41 @@ class StatsRepository:
             "total_paid": float(total_paid or 0),
             "total_balances": float(total_balances or 0),
         }
+
+
+class ReferralRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def set_referrer_if_first_time(self, referee_user_id: int, referrer_user_id: int) -> bool:
+        """
+        Устанавливает referrer (уровень 1) только один раз — если у пользователя ещё нет записи.
+        Возвращает True если связь создана.
+        """
+        if referrer_user_id == referee_user_id:
+            return False
+
+        existing = await self.get_referrer_for_referee(referee_user_id)
+        if existing:
+            return False
+
+        self.session.add(Referral(referrer_user_id=referrer_user_id, referee_user_id=referee_user_id))
+        await self.session.flush()
+        return True
+
+    async def get_referrer_for_referee(self, referee_user_id: int) -> int | None:
+        result = await self.session.execute(
+            select(Referral.referrer_user_id).where(Referral.referee_user_id == referee_user_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_total_referral_income(self, user_id: int) -> float:
+        result = await self.session.execute(
+            select(func.coalesce(func.sum(BalanceOperation.amount), 0)).where(
+                BalanceOperation.user_id == user_id,
+                BalanceOperation.operation_type.in_(
+                    ["referral_commission_l1", "referral_commission_l2"]
+                ),
+            )
+        )
+        return float(result.scalar() or 0)

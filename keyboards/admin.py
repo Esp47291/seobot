@@ -45,3 +45,15 @@ def withdraw_kb(withdraw_id: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def users_manage_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔒 Заблокировать", callback_data="admin:user_block")],
+            [InlineKeyboardButton(text="🔓 Разблокировать", callback_data="admin:user_unblock")],
+            [InlineKeyboardButton(text="💰 Добавить баланс", callback_data="admin:user_balance_add")],
+            [InlineKeyboardButton(text="💸 Уменьшить баланс", callback_data="admin:user_balance_sub")],
+            [InlineKeyboardButton(text="◀ Назад", callback_data="admin:back_main")],
+        ]
+    )
