@@ -13,8 +13,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN, PROXY_URL
 from database import init_db
-from middlewares import DbSessionMiddleware, AdminOnlyMiddleware, BlockedUserMiddleware
-from handlers import user_router, admin_router
+from middlewares import (
+    AdminOnlyMiddleware,
+    AdminOrManagerMiddleware,
+    BlockedUserMiddleware,
+    DbSessionMiddleware,
+    ManagerOnlyMiddleware,
+)
+from handlers import admin_router, manager_router, staff_settings_router, user_router
 from services.review_scheduler import start_scheduler
 
 logging.basicConfig(
@@ -52,11 +58,21 @@ async def main() -> None:
     user_router.message.middleware(BlockedUserMiddleware())
     user_router.callback_query.middleware(BlockedUserMiddleware())
 
-    # Админ-роутер: только для пользователей из ADMIN_IDS - ИСПРАВЛЕНО для aiogram 3.x
-    # Вместо outer_middleware используем middleware для конкретных типов обновлений
+    # Менеджер: /manager и callback'и mgr:*
+    manager_router.message.middleware(BlockedUserMiddleware())
+    manager_router.callback_query.middleware(BlockedUserMiddleware())
+    manager_router.message.middleware(ManagerOnlyMiddleware())
+    manager_router.callback_query.middleware(ManagerOnlyMiddleware())
+    dp.include_router(manager_router)
+
+    # Команды set_welcome / set_help / set_min_* — и у админа, и у менеджера
+    staff_settings_router.message.middleware(BlockedUserMiddleware())
+    staff_settings_router.message.middleware(AdminOrManagerMiddleware())
+    dp.include_router(staff_settings_router)
+
+    # Админ-роутер: только ADMIN_IDS
     admin_router.message.middleware(AdminOnlyMiddleware())
     admin_router.callback_query.middleware(AdminOnlyMiddleware())
-
     dp.include_router(admin_router)
     scheduler = start_scheduler(bot)
 

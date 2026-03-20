@@ -16,6 +16,8 @@ def _parse_admin_ids(value: str) -> list[int]:
 
 BOT_TOKEN: str = env.str("BOT_TOKEN", "")
 ADMIN_IDS: list[int] = _parse_admin_ids(env.str("ADMIN_IDS", ""))
+# ID менеджеров (через запятую): MANAGER_IDS=111,222
+MANAGER_IDS: list[int] = _parse_admin_ids(env.str("MANAGER_IDS", ""))
 SUPPORT_URL: str = env.str("SUPPORT_URL", "https://t.me/")
 PROXY_URL: str = env.str("PROXY_URL", "")
 
@@ -33,5 +35,10 @@ DB_PATH = os.path.join(BASE_DIR, "data", "seobot.db")
 DATABASE_URL: str = env.str("DATABASE_URL", f"sqlite+aiosqlite:///{DB_PATH}")
 
 DEFAULT_MIN_WITHDRAW: int = env.int("DEFAULT_MIN_WITHDRAW", 20)
+# Текст для админа: рекомендуемый срок «живой» проверки отзыва на площадке
 REVIEW_CHECK_DAYS: int = env.int("REVIEW_CHECK_DAYS", 3)
+# Через сколько минут после скрина отзыва бот пришлёт админу напоминание с кнопками Принять/Отклонить
+REVIEW_REMINDER_AFTER_MINUTES: int = env.int("REVIEW_REMINDER_AFTER_MINUTES", 1)
+# Как часто джоб проверяет просроченные отзывы (для REMINDER=1 поставьте 1)
+REVIEW_SCHEDULER_INTERVAL_MINUTES: int = env.int("REVIEW_SCHEDULER_INTERVAL_MINUTES", 1)
 SCHEDULER_INTERVAL_MINUTES: int = env.int("SCHEDULER_INTERVAL_MINUTES", 60)

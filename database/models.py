@@ -16,9 +16,29 @@ class User(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     city: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Реквизиты для выплат за задания (редактируются в ЛК)
+    payout_requisites: Mapped[str | None] = mapped_column(Text, nullable=True)
     balance: Mapped[float] = mapped_column(Numeric(10, 2), default=0)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     registered_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # JSON: платформа -> последний task_item_id (честная ротация карточек)
+    task_rotation_json: Mapped[str] = mapped_column(Text, default="{}")
+    # JSON: платформа -> true — после проверки «2-й аккаунт» можно снова брать задания (сбрасывается после нового completed)
+    repeat_unlock_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class SecondAccountReview(Base):
+    """Модерация скрина второго аккаунта на площадке (чтобы снова брать задания по платформе)."""
+
+    __tablename__ = "second_account_reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(120))
+    screenshot_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    decline_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class TaskItem(Base):
@@ -26,12 +46,17 @@ class TaskItem(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     platform: Mapped[str] = mapped_column(String(50), index=True)
+    # Фильтр показа исполнителям: "*" = все города, иначе совпадение с городом в профиле
     city: Mapped[str] = mapped_column(String(255), index=True)
+    # Город организации / заведения — показывается исполнителю на карточке
+    venue_city: Mapped[str] = mapped_column(String(255), default="")
     sphere: Mapped[str] = mapped_column(String(255))
     instruction_url: Mapped[str] = mapped_column(String(1024))
     price: Mapped[float] = mapped_column(Numeric(10, 2))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # Telegram user_id менеджера, разместившего задание; NULL = задание админа
+    created_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
 
 
 class Attempt(Base):
@@ -48,6 +73,9 @@ class Attempt(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     check_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     review_check_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    payout_requisites: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Для заданий менеджера: баланс начисляется после нажатия «Оплатил»
+    balance_credited: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

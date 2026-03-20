@@ -14,8 +14,32 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def platforms_kb(platforms: list[str]) -> InlineKeyboardMarkup:
+def tasks_all_done_kb() -> InlineKeyboardMarkup:
+    """Когда по платформе все задания уже выполнены — второй аккаунт или назад."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="У меня есть второй аккаунт", callback_data="secacc:want")],
+            [InlineKeyboardButton(text="◀ К выбору города", callback_data="back_task_venue")],
+        ]
+    )
+
+
+def task_venue_cities_kb(pick_list: list[str], empty_marker: str) -> InlineKeyboardMarkup:
+    """Города организаций (venue_city); empty_marker — служебное значение для заданий без города."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for i, label in enumerate(pick_list):
+        btn_text = "📍 Другие (город не указан)" if label == empty_marker else label
+        if len(btn_text) > 64:
+            btn_text = btn_text[:61] + "…"
+        rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"taskvenue:{i}")])
+    rows.append([InlineKeyboardButton(text="🔙 В главное меню", callback_data="to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def platforms_kb(platforms: list[str], *, show_back_venue: bool = False) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=p, callback_data=f"platform:{p}")] for p in platforms]
+    if show_back_venue:
+        rows.append([InlineKeyboardButton(text="◀ Выбор города", callback_data="back_task_venue")])
     rows.append([InlineKeyboardButton(text="🔙 В главное меню", callback_data="to_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -39,5 +63,9 @@ def cancel_attempt_kb() -> InlineKeyboardMarkup:
 
 def operations_history_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="📊 История операций", callback_data="cabinet_history")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📊 История операций", callback_data="cabinet_history")],
+            [InlineKeyboardButton(text="✏️ Редактировать реквизиты", callback_data="cabinet_edit_requisites")],
+            [InlineKeyboardButton(text="◀️ В главное меню", callback_data="to_menu")],
+        ]
     )

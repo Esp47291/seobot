@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Подключение к БД и создание сессий."""
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from config import DATABASE_URL
@@ -41,7 +42,29 @@ async def get_async_session() -> AsyncSession:
             await session.close()
 
 
+async def _sqlite_add_column_if_missing(conn, table: str, column: str, ddl: str) -> None:
+    r = await conn.execute(text(f"PRAGMA table_info({table})"))
+    cols = [row[1] for row in r.fetchall()]
+    if column not in cols:
+        await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
+
+
+async def migrate_sqlite_schema() -> None:
+    """Добавление колонок в существующую SQLite БД (create_all не меняет старые таблицы)."""
+    if not DATABASE_URL.startswith("sqlite"):
+        return
+    async with engine.begin() as conn:
+        await _sqlite_add_column_if_missing(conn, "task_items", "created_by_user_id", "created_by_user_id BIGINT")
+        await _sqlite_add_column_if_missing(conn, "task_items", "venue_city", "venue_city VARCHAR(255) DEFAULT ''")
+        await _sqlite_add_column_if_missing(conn, "attempts", "payout_requisites", "payout_requisites TEXT")
+        await _sqlite_add_column_if_missing(conn, "attempts", "balance_credited", "balance_credited INTEGER NOT NULL DEFAULT 0")
+        await _sqlite_add_column_if_missing(conn, "users", "payout_requisites", "payout_requisites TEXT")
+        await _sqlite_add_column_if_missing(conn, "users", "task_rotation_json", "task_rotation_json TEXT DEFAULT '{}'")
+        await _sqlite_add_column_if_missing(conn, "users", "repeat_unlock_json", "repeat_unlock_json TEXT DEFAULT '{}'")
+
+
 async def init_db() -> None:
     """Создание таблиц при старте."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await migrate_sqlite_schema()

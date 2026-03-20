@@ -1,13 +1,53 @@
 # -*- coding: utf-8 -*-
 """Репозитории для SeoJob / Отзовик."""
+import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import DEFAULT_MIN_WITHDRAW, REVIEW_CHECK_DAYS
-from .models import Attempt, BalanceOperation, BotSetting, Referral, TaskItem, User, WithdrawalRequest
+from config import DEFAULT_MIN_WITHDRAW, MANAGER_IDS, REVIEW_REMINDER_AFTER_MINUTES
+from .models import (
+    Attempt,
+    BalanceOperation,
+    BotSetting,
+    Referral,
+    SecondAccountReview,
+    TaskItem,
+    User,
+    WithdrawalRequest,
+)
+
+
+def _json_loads_map(raw: str | None) -> dict:
+    if not raw or not str(raw).strip():
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+# Незавершённый цикл: нельзя начинать новое задание, пока есть такая попытка
+_PIPELINE_ACTIVE_STATUSES = frozenset({"waiting_approval", "login_screenshot", "approved", "review_submitted"})
+
+
+def _executor_sees_task_filter(user_profile_city: str | None):
+    """Задание показывается исполнителю: city=* или совпадает с городом в профиле."""
+    c = (user_profile_city or "").strip()
+    if c:
+        return or_(TaskItem.city == "*", TaskItem.city == c)
+    return TaskItem.city == "*"
+
+
+def _venue_city_match_empty():
+    """Задание без указанного города организации (venue_city пустой)."""
+    return func.length(func.trim(func.coalesce(TaskItem.venue_city, ""))) == 0
+
+
+def _venue_city_match_value(venue_city: str):
+    return func.trim(TaskItem.venue_city) == venue_city.strip()
 
 
 class UserRepository:
@@ -40,6 +80,12 @@ class UserRepository:
             user.city = city
             await self.session.flush()
 
+    async def set_profile_payout_requisites(self, user_id: int, text: str | None) -> None:
+        user = await self.get_by_user_id(user_id)
+        if user:
+            user.payout_requisites = text
+            await self.session.flush()
+
     async def add_balance(self, user_id: int, amount: float) -> None:
         user = await self.get_by_user_id(user_id)
         if user:
@@ -62,10 +108,89 @@ class UserRepository:
             user.is_blocked = value
             await self.session.flush()
 
+    async def get_task_rotation_map(self, user_id: int) -> dict:
+        user = await self.get_by_user_id(user_id)
+        if not user:
+            return {}
+        return _json_loads_map(getattr(user, "task_rotation_json", None) or "{}")
+
+    async def set_last_started_task_for_platform(self, user_id: int, platform: str, task_item_id: int) -> None:
+        user = await self.get_by_user_id(user_id)
+        if not user:
+            return
+        m = _json_loads_map(getattr(user, "task_rotation_json", None))
+        m[platform] = task_item_id
+        user.task_rotation_json = json.dumps(m, ensure_ascii=False)
+        await self.session.flush()
+
+    async def get_repeat_unlock_map(self, user_id: int) -> dict:
+        user = await self.get_by_user_id(user_id)
+        if not user:
+            return {}
+        return _json_loads_map(getattr(user, "repeat_unlock_json", None) or "{}")
+
+    async def set_repeat_unlock_platform(self, user_id: int, platform: str, enabled: bool = True) -> None:
+        user = await self.get_by_user_id(user_id)
+        if not user:
+            return
+        m = _json_loads_map(getattr(user, "repeat_unlock_json", None))
+        if enabled:
+            m[platform] = True
+        else:
+            m.pop(platform, None)
+        user.repeat_unlock_json = json.dumps(m, ensure_ascii=False)
+        await self.session.flush()
+
+    async def clear_repeat_unlock_platform(self, user_id: int, platform: str) -> None:
+        await self.set_repeat_unlock_platform(user_id, platform, enabled=False)
+
 
 class TaskItemRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def get_venue_city_pick_list(self, user_profile_city: str | None) -> tuple[list[str], bool]:
+        """
+        Города организаций (venue_city) среди активных заданий, видимых исполнителю.
+        Второй элемент — есть ли задания с пустым venue_city (отдельная кнопка в боте).
+        """
+        result = await self.session.execute(
+            select(TaskItem.venue_city).where(TaskItem.is_active == True, _executor_sees_task_filter(user_profile_city))
+        )
+        nonempty: set[str] = set()
+        has_empty = False
+        for vc in result.scalars().all():
+            s = (vc or "").strip()
+            if not s:
+                has_empty = True
+            else:
+                nonempty.add(s)
+        ordered = sorted(nonempty, key=lambda x: x.casefold())
+        return ordered, has_empty
+
+    async def get_platforms_for_venue(self, venue_city: str | None, user_profile_city: str | None) -> list[str]:
+        """Платформы с активными заданиями в выбранном городе организации (None = только без города)."""
+        conds = [
+            TaskItem.is_active == True,
+            _executor_sees_task_filter(user_profile_city),
+            _venue_city_match_empty() if venue_city is None else _venue_city_match_value(venue_city),
+        ]
+        r = await self.session.execute(
+            select(TaskItem.platform).where(*conds).group_by(TaskItem.platform).order_by(TaskItem.platform)
+        )
+        return list(r.scalars().all())
+
+    async def get_active_for_venue_platform(
+        self, venue_city: str | None, platform: str, user_profile_city: str | None
+    ) -> list[TaskItem]:
+        conds = [
+            TaskItem.platform == platform,
+            TaskItem.is_active == True,
+            _executor_sees_task_filter(user_profile_city),
+            _venue_city_match_empty() if venue_city is None else _venue_city_match_value(venue_city),
+        ]
+        r = await self.session.execute(select(TaskItem).where(*conds).order_by(TaskItem.id))
+        return list(r.scalars().all())
 
     async def get_platforms_by_city(self, city: str) -> list[str]:
         result = await self.session.execute(
@@ -99,7 +224,16 @@ class TaskItemRepository:
         result = await self.session.execute(select(TaskItem).order_by(TaskItem.id.desc()))
         return list(result.scalars().all())
 
-    async def create(self, platform: str, city: str, sphere: str, price: float, instruction_url: str) -> TaskItem:
+    async def create(
+        self,
+        platform: str,
+        city: str,
+        sphere: str,
+        venue_city: str,
+        price: float,
+        instruction_url: str,
+        created_by_user_id: int | None = None,
+    ) -> TaskItem:
         # Минимальная цена в зависимости от платформы
         settings = await SettingsRepository(self.session).get()
         min_price = self._min_price_for_platform(platform, settings)
@@ -110,8 +244,10 @@ class TaskItemRepository:
             platform=platform,
             city=city,
             sphere=sphere,
+            venue_city=(venue_city or "").strip(),
             price=price,
             instruction_url=instruction_url,
+            created_by_user_id=created_by_user_id,
         )
         self.session.add(task)
         await self.session.flush()
@@ -158,6 +294,12 @@ class TaskItemRepository:
         await self.session.flush()
         return True
 
+    async def get_by_creator(self, creator_user_id: int) -> list[TaskItem]:
+        result = await self.session.execute(
+            select(TaskItem).where(TaskItem.created_by_user_id == creator_user_id).order_by(TaskItem.id.desc())
+        )
+        return list(result.scalars().all())
+
 
 class AttemptRepository:
     def __init__(self, session: AsyncSession):
@@ -181,6 +323,23 @@ class AttemptRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def get_active_pipeline_attempt(self, user_id: int) -> Attempt | None:
+        """Попытка в процессе (профиль/отзыв на проверке и т.д.) — блокирует старт другого задания."""
+        result = await self.session.execute(
+            select(Attempt)
+            .where(Attempt.user_id == user_id, Attempt.status.in_(_PIPELINE_ACTIVE_STATUSES))
+            .order_by(Attempt.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def completed_task_item_ids(self, user_id: int) -> set[int]:
+        """ID заданий, которые пользователь уже успешно завершил (статус completed)."""
+        result = await self.session.execute(
+            select(Attempt.task_item_id).where(Attempt.user_id == user_id, Attempt.status == "completed")
+        )
+        return {int(row[0]) for row in result.all()}
 
     async def set_account_screenshot(self, attempt_id: int, file_id: str) -> None:
         attempt = await self.get_by_id(attempt_id)
@@ -210,14 +369,23 @@ class AttemptRepository:
             attempt.status = "canceled"
             await self.session.flush()
 
-    async def submit_review(self, attempt_id: int, file_id: str) -> Attempt | None:
+    async def submit_review(self, attempt_id: int, file_id: str, payout_requisites: str) -> Attempt | None:
+        """
+        Скрин опубликованного отзыва. Статус должен быть approved.
+        payout_requisites — копия из профиля исполнителя на момент отправки.
+        check_after — когда прислать админу напоминание с кнопками (см. REVIEW_REMINDER_AFTER_MINUTES).
+        """
         attempt = await self.get_by_id(attempt_id)
-        if not attempt:
+        if not attempt or attempt.status != "approved":
+            return None
+        if not (payout_requisites or "").strip():
             return None
         attempt.review_screenshot_file_id = file_id
+        attempt.payout_requisites = payout_requisites.strip()
         attempt.status = "review_submitted"
         attempt.submitted_at = datetime.utcnow()
-        attempt.check_after = attempt.submitted_at + timedelta(days=REVIEW_CHECK_DAYS)
+        attempt.check_after = attempt.submitted_at + timedelta(minutes=REVIEW_REMINDER_AFTER_MINUTES)
+        attempt.review_check_requested = False
         await self.session.flush()
         return attempt
 
@@ -229,6 +397,14 @@ class AttemptRepository:
         if attempt.status != "review_submitted":
             return None
         attempt.status = "completed"
+        await self.session.flush()
+        return attempt
+
+    async def mark_balance_credited(self, attempt_id: int) -> Attempt | None:
+        attempt = await self.get_by_id(attempt_id)
+        if not attempt or attempt.balance_credited:
+            return None
+        attempt.balance_credited = True
         await self.session.flush()
         return attempt
 
@@ -262,6 +438,51 @@ class AttemptRepository:
             select(func.count()).select_from(Attempt).where(Attempt.user_id == user_id, Attempt.status == "completed")
         )
         return int(result.scalar() or 0)
+
+
+class SecondAccountReviewRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def get_by_id(self, review_id: int) -> SecondAccountReview | None:
+        return await self.session.get(SecondAccountReview, review_id)
+
+    async def get_pending_for_user(self, user_id: int) -> SecondAccountReview | None:
+        result = await self.session.execute(
+            select(SecondAccountReview)
+            .where(SecondAccountReview.user_id == user_id, SecondAccountReview.status == "pending")
+            .order_by(SecondAccountReview.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def create(self, user_id: int, platform: str, screenshot_file_id: str) -> SecondAccountReview:
+        row = SecondAccountReview(
+            user_id=user_id,
+            platform=platform,
+            screenshot_file_id=screenshot_file_id,
+            status="pending",
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def approve(self, review_id: int) -> SecondAccountReview | None:
+        row = await self.get_by_id(review_id)
+        if not row or row.status != "pending":
+            return None
+        row.status = "approved"
+        await self.session.flush()
+        return row
+
+    async def reject(self, review_id: int, reason: str | None = None) -> SecondAccountReview | None:
+        row = await self.get_by_id(review_id)
+        if not row or row.status != "pending":
+            return None
+        row.status = "rejected"
+        row.decline_reason = reason
+        await self.session.flush()
+        return row
 
 
 class BalanceRepository:
@@ -379,6 +600,224 @@ class StatsRepository:
             "tasks_completed": tasks_completed,
             "total_paid": float(total_paid or 0),
             "total_balances": float(total_balances or 0),
+        }
+
+    async def manager_completed_tasks(self, manager_user_id: int) -> int:
+        """Сколько попыток по заданиям этого менеджера дошли до статуса completed."""
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(Attempt)
+            .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+            .where(
+                TaskItem.created_by_user_id == manager_user_id,
+                Attempt.status == "completed",
+            )
+        )
+        return int(result.scalar() or 0)
+
+    async def admin_dashboard_extras(self) -> dict:
+        """Дополнительные метрики только для админ-панели."""
+        row = (
+            await self.session.execute(
+                select(func.count(WithdrawalRequest.id), func.coalesce(func.sum(WithdrawalRequest.amount), 0)).where(
+                    WithdrawalRequest.status == "pending"
+                )
+            )
+        ).one()
+        reviews_pending = int(
+            (
+                await self.session.execute(
+                    select(func.count()).select_from(Attempt).where(Attempt.status == "review_submitted")
+                )
+            ).scalar()
+            or 0
+        )
+        profiles_pending = int(
+            (
+                await self.session.execute(
+                    select(func.count()).select_from(Attempt).where(Attempt.status.in_(["waiting_approval", "login_screenshot"]))
+                )
+            ).scalar()
+            or 0
+        )
+        manager_tasks = int(
+            (
+                await self.session.execute(
+                    select(func.count()).select_from(TaskItem).where(TaskItem.created_by_user_id.isnot(None))
+                )
+            ).scalar()
+            or 0
+        )
+        admin_tasks = int(
+            (
+                await self.session.execute(
+                    select(func.count()).select_from(TaskItem).where(TaskItem.created_by_user_id.is_(None))
+                )
+            ).scalar()
+            or 0
+        )
+        active_tasks = int(
+            (await self.session.execute(select(func.count()).select_from(TaskItem).where(TaskItem.is_active == True))).scalar()
+            or 0
+        )
+        ref_ops = int(
+            (
+                await self.session.execute(
+                    select(func.count()).select_from(BalanceOperation).where(
+                        BalanceOperation.operation_type.in_(["referral_commission_l1", "referral_commission_l2"])
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+        return {
+            "pending_wd_count": int(row[0] or 0),
+            "pending_wd_sum": float(row[1] or 0),
+            "reviews_awaiting_admin": reviews_pending,
+            "profiles_awaiting_admin": profiles_pending,
+            "manager_tasks_total": manager_tasks,
+            "admin_tasks_total": admin_tasks,
+            "tasks_active_any_owner": active_tasks,
+            "referral_payout_ops_total": ref_ops,
+        }
+
+    async def manager_ids_for_admin_report(self) -> list[int]:
+        """ID менеджеров: из .env и из фактически созданных заданий."""
+        result = await self.session.execute(
+            select(TaskItem.created_by_user_id).where(TaskItem.created_by_user_id.isnot(None)).distinct()
+        )
+        from_db = {row[0] for row in result.all() if row[0] is not None}
+        return sorted(from_db | set(MANAGER_IDS))
+
+    async def per_manager_admin_snapshot(self, manager_user_id: int) -> dict:
+        """Детальная сводка по одному менеджеру для админки."""
+        u_row = await self.session.execute(select(User).where(User.user_id == manager_user_id))
+        user = u_row.scalar_one_or_none()
+        username = user.username if user else None
+
+        t_result = await self.session.execute(
+            select(TaskItem)
+            .where(TaskItem.created_by_user_id == manager_user_id)
+            .order_by(TaskItem.id.desc())
+        )
+        tasks: list[TaskItem] = list(t_result.scalars().all())
+        tasks_total = len(tasks)
+        tasks_active = sum(1 for t in tasks if t.is_active)
+
+        executions_completed = int(
+            (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(Attempt)
+                    .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+                    .where(TaskItem.created_by_user_id == manager_user_id, Attempt.status == "completed")
+                )
+            ).scalar()
+            or 0
+        )
+
+        paid_count = int(
+            (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(Attempt)
+                    .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+                    .where(
+                        TaskItem.created_by_user_id == manager_user_id,
+                        Attempt.status == "completed",
+                        Attempt.balance_credited == True,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+        pending_pay_count = int(
+            (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(Attempt)
+                    .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+                    .where(
+                        TaskItem.created_by_user_id == manager_user_id,
+                        Attempt.status == "completed",
+                        Attempt.balance_credited == False,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+
+        sum_paid = float(
+            (
+                await self.session.execute(
+                    select(func.coalesce(func.sum(TaskItem.price), 0))
+                    .select_from(Attempt)
+                    .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+                    .where(
+                        TaskItem.created_by_user_id == manager_user_id,
+                        Attempt.status == "completed",
+                        Attempt.balance_credited == True,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+        sum_pending = float(
+            (
+                await self.session.execute(
+                    select(func.coalesce(func.sum(TaskItem.price), 0))
+                    .select_from(Attempt)
+                    .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+                    .where(
+                        TaskItem.created_by_user_id == manager_user_id,
+                        Attempt.status == "completed",
+                        Attempt.balance_credited == False,
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+
+        # В работе: не завершённые попытки по заданиям менеджера
+        in_progress = int(
+            (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(Attempt)
+                    .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+                    .where(
+                        TaskItem.created_by_user_id == manager_user_id,
+                        Attempt.status.notin_(["completed", "declined", "rejected", "canceled"]),
+                    )
+                )
+            ).scalar()
+            or 0
+        )
+
+        task_lines = []
+        for t in tasks[:25]:
+            vc = (getattr(t, "venue_city", None) or "").strip() or "—"
+            sp = (t.sphere or "").strip() or "—"
+            sp_short = sp[:20] + "…" if len(sp) > 20 else sp
+            task_lines.append(
+                f"  • #{t.id} {t.platform} | {vc} | {sp_short} | {float(t.price):.2f} руб. | "
+                f"{'ON' if t.is_active else 'OFF'}"
+            )
+        if tasks_total > 25:
+            task_lines.append(f"  … и ещё {tasks_total - 25} заданий")
+
+        return {
+            "user_id": manager_user_id,
+            "username": username,
+            "tasks_total": tasks_total,
+            "tasks_active": tasks_active,
+            "task_lines": task_lines,
+            "executions_completed": executions_completed,
+            "paid_by_manager_count": paid_count,
+            "awaiting_manager_payment_count": pending_pay_count,
+            "sum_paid_out_rub": sum_paid,
+            "sum_awaiting_manager_rub": sum_pending,
+            "attempts_in_progress": in_progress,
         }
 
 

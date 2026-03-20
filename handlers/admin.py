@@ -9,11 +9,12 @@ from aiogram.types import CallbackQuery, Message
 
 from sqlalchemy import select
 
+from config import ADMIN_IDS
 from database.models import User
 from database import (
     AttemptRepository,
     BalanceRepository,
-    ReferralRepository,
+    SecondAccountReviewRepository,
     SettingsRepository,
     StatsRepository,
     TaskItemRepository,
@@ -21,10 +22,33 @@ from database import (
     WithdrawalRepository,
 )
 from keyboards.admin import admin_main, users_manage_kb, withdraw_kb
+from keyboards.manager import manager_payout_kb
 from keyboards.user import cancel_attempt_kb
+from services.task_payout import grant_task_completion_rewards
 from utils.fsm import AdminFSM
 
 router = Router(name="admin")
+
+
+def _telegram_text_chunks(text: str, max_len: int = 3800) -> list[str]:
+    """Разбить длинный текст на части под лимит Telegram (~4096)."""
+    if len(text) <= max_len:
+        return [text]
+    chunks: list[str] = []
+    current: list[str] = []
+    cur_len = 0
+    for line in text.split("\n"):
+        add = len(line) + (1 if current else 0)
+        if cur_len + add > max_len and current:
+            chunks.append("\n".join(current))
+            current = [line]
+            cur_len = len(line)
+        else:
+            current.append(line)
+            cur_len += add
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
 
 
 @router.message(Command("admin"))
@@ -63,7 +87,7 @@ async def tasks_add_start(cb: CallbackQuery, state: FSMContext, **data):
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     await cb.message.answer(
-        "Шаг 1/4.\nВыберите платформу:",
+        "Шаг 1/6.\nВыберите платформу:",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="Яндекс карты", callback_data="admin:tasks_plat:yandex")],
@@ -81,7 +105,7 @@ async def tasks_plat_yandex(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(AdminFSM.waiting_task_price)
     await state.update_data(platform="Яндекс карты")
-    await cb.message.answer("Шаг 2/4.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:2gis")
@@ -90,7 +114,7 @@ async def tasks_plat_2gis(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(AdminFSM.waiting_task_price)
     await state.update_data(platform="2ГИС")
-    await cb.message.answer("Шаг 2/4.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:google")
@@ -99,7 +123,7 @@ async def tasks_plat_google(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(AdminFSM.waiting_task_price)
     await state.update_data(platform="Google карты")
-    await cb.message.answer("Шаг 2/4.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:other")
@@ -107,7 +131,7 @@ async def tasks_plat_other(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.clear()
     await state.set_state(AdminFSM.waiting_task_platform)
-    await cb.message.answer("Шаг 1/4.\nНапишите название платформы.\n\nПример: `Яндекс карты`")
+    await cb.message.answer("Шаг 1/6.\nНапишите название платформы.\n\nПример: `Яндекс карты`")
 
 
 @router.message(AdminFSM.waiting_task_platform, F.text)
@@ -118,7 +142,7 @@ async def tasks_add_platform(message: Message, state: FSMContext, **data):
         return
     await state.update_data(platform=message.text.strip())
     await state.set_state(AdminFSM.waiting_task_price)
-    await message.answer("Шаг 2/4.\nНапишите цену за отзыв (число). Например: 120")
+    await message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.message(AdminFSM.waiting_task_price, F.text)
@@ -153,8 +177,47 @@ async def tasks_add_price(message: Message, state: FSMContext, **data):
         return
 
     await state.update_data(price=float(price))
+    await state.set_state(AdminFSM.waiting_task_venue_city)
+    await message.answer(
+        "Шаг 3/6.\nУкажите <b>город организации</b> (где находится заведение). "
+        "Это увидит исполнитель на карточке задания.\n\n"
+        "Пример: Москва, Казань",
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminFSM.waiting_task_venue_city, F.text)
+async def tasks_add_venue_city(message: Message, state: FSMContext, **data):
+    if message.text.strip() == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+    venue_city = message.text.strip()
+    if len(venue_city) < 2:
+        await message.answer("Город слишком короткий. Напишите название города.")
+        return
+    await state.update_data(venue_city=venue_city)
+    await state.set_state(AdminFSM.waiting_task_sphere)
+    await message.answer(
+        "Шаг 4/6.\nУкажите <b>сферу бизнеса</b> организации (исполнитель увидит это на карточке).\n\n"
+        "Пример: кафе, автосервис, стоматология, салон красоты",
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminFSM.waiting_task_sphere, F.text)
+async def tasks_add_sphere(message: Message, state: FSMContext, **data):
+    if message.text.strip() == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+    sphere = message.text.strip()
+    if len(sphere) < 2:
+        await message.answer("Сфера слишком короткая. Опишите сферу подробнее.")
+        return
+    await state.update_data(task_sphere=sphere)
     await state.set_state(AdminFSM.waiting_task_instruction)
-    await message.answer("Шаг 3/4.\nНапишите инструкцию для исполнителя.")
+    await message.answer("Шаг 5/6.\nНапишите инструкцию для исполнителя.")
 
 
 @router.message(AdminFSM.waiting_task_instruction, F.text)
@@ -165,7 +228,7 @@ async def tasks_add_instruction(message: Message, state: FSMContext, **data):
         return
     await state.update_data(instruction_text=message.text.strip())
     await state.set_state(AdminFSM.waiting_task_venue_link)
-    await message.answer("Шаг 4/4.\nДобавьте ссылку на заведение, где нужно оставить отзыв.")
+    await message.answer("Шаг 6/6.\nДобавьте ссылку на заведение, где нужно оставить отзыв.")
 
 
 @router.message(AdminFSM.waiting_task_venue_link, F.text)
@@ -181,10 +244,20 @@ async def tasks_add_venue_link(message: Message, state: FSMContext, **data):
     platform = (d.get("platform") or "").strip()
     instruction_text = (d.get("instruction_text") or "").strip()
     venue_url = message.text.strip()
+    venue_city = (d.get("venue_city") or "").strip()
+    task_sphere = (d.get("task_sphere") or "").strip()
 
     if not platform:
         await state.clear()
         await message.answer("Ошибка: платформа не указана.")
+        return
+    if not venue_city:
+        await state.clear()
+        await message.answer("Ошибка: город организации не указан. Начните создание задания заново.")
+        return
+    if not task_sphere:
+        await state.clear()
+        await message.answer("Ошибка: сфера не указана. Начните создание задания заново.")
         return
     if not instruction_text:
         await state.clear()
@@ -198,7 +271,8 @@ async def tasks_add_venue_link(message: Message, state: FSMContext, **data):
     task = await task_repo.create(
         platform=platform,
         city="*",
-        sphere="Отзывы",
+        sphere=task_sphere,
+        venue_city=venue_city,
         price=float(price),
         instruction_url=f"{instruction_text}\n\nСсылка на заведение для отзыва: {venue_url}",
     )
@@ -229,7 +303,13 @@ async def tasks_delete_menu(cb: CallbackQuery, state: FSMContext, **data):
     # кнопки только с цифрами по порядку
     for idx, item in enumerate(items_sorted, start=1):
         label = f"{idx}"
-        lines.append(f"{idx}) ID {item.id} | {item.platform} | {float(item.price):.2f} руб. | {'ON' if item.is_active else 'OFF'}")
+        vc = (getattr(item, "venue_city", None) or "").strip() or "—"
+        sp = (item.sphere or "").strip() or "—"
+        sp_short = sp[:24] + "…" if len(sp) > 24 else sp
+        lines.append(
+            f"{idx}) ID {item.id} | {item.platform} | город: {vc} | {sp_short} | "
+            f"{float(item.price):.2f} руб. | {'ON' if item.is_active else 'OFF'}"
+        )
         kb.inline_keyboard.append(
             [InlineKeyboardButton(text=label, callback_data=f"admin:tasks_del:{item.id}")]
         )
@@ -257,15 +337,113 @@ async def tasks_delete_action(cb: CallbackQuery, state: FSMContext, **data):
 async def stats(cb: CallbackQuery, **data):
     await cb.answer()
     session = data["session"]
-    s = await StatsRepository(session).summary()
+    repo = StatsRepository(session)
+    s = await repo.summary()
+    ex = await repo.admin_dashboard_extras()
+
+    global_lines = [
+        "📊 <b>Общая статистика</b>",
+        f"Пользователей: {s['users_total']} (новых за 7 дней: {s['users_new_week']})",
+        f"Выполнено заданий (всего, все владельцы): {s['tasks_completed']}",
+        f"Выплачено по заявкам на вывод (подтверждённые): {s['total_paid']:.2f} руб.",
+        f"Сумма балансов пользователей в боте: {s['total_balances']:.2f} руб.",
+        "",
+        "📌 <b>Очереди и заявки</b>",
+        f"Отзывов ждут решения админа (скрин отзыва): {ex['reviews_awaiting_admin']}",
+        f"Профилей ждут допуска к заданию: {ex['profiles_awaiting_admin']}",
+        f"Заявок на вывод в ожидании: {ex['pending_wd_count']} на сумму {ex['pending_wd_sum']:.2f} руб.",
+        "",
+        "📦 <b>Карточки заданий</b>",
+        f"Всего заданий в базе: {ex['manager_tasks_total'] + ex['admin_tasks_total']} "
+        f"(активных сейчас: {ex['tasks_active_any_owner']})",
+        f"  • размещено <b>менеджерами</b>: {ex['manager_tasks_total']}",
+        f"  • размещено <b>админом</b>: {ex['admin_tasks_total']}",
+        "",
+        f"🔗 Записей реферальных начислений в истории операций: {ex['referral_payout_ops_total']}",
+    ]
+    global_text = "\n".join(global_lines)
+    for chunk in _telegram_text_chunks(global_text):
+        await cb.message.answer(chunk, parse_mode="HTML")
+
+    manager_ids = await repo.manager_ids_for_admin_report()
+    if not manager_ids:
+        await cb.message.answer("👔 <b>Менеджеры:</b> в .env нет MANAGER_IDS и нет заданий с владельцем-менеджером.", parse_mode="HTML")
+        return
+
     await cb.message.answer(
-        "Статистика:\n"
-        f"Всего пользователей: {s['users_total']}\n"
-        f"Новых за 7 дней: {s['users_new_week']}\n"
-        f"Выполнено заданий: {s['tasks_completed']}\n"
-        f"Всего выплачено: {s['total_paid']:.2f}\n"
-        f"Сумма балансов: {s['total_balances']:.2f}"
+        f"👔 <b>Менеджеры ({len(manager_ids)}):</b> детализация ниже — по одному сообщению на каждого.",
+        parse_mode="HTML",
     )
+
+    for mid in manager_ids:
+        snap = await repo.per_manager_admin_snapshot(mid)
+        uname_line = f"@{snap['username']}" if snap["username"] else "username не указан"
+        mlines = [
+            f"👤 <b>Менеджер</b> <code>{snap['user_id']}</code> ({uname_line})",
+            "",
+            f"📋 Заданий размещено: <b>{snap['tasks_total']}</b> (активных: {snap['tasks_active']})",
+        ]
+        if snap["task_lines"]:
+            mlines.append("Список заданий:")
+            mlines.extend(snap["task_lines"])
+        else:
+            mlines.append("Заданий пока нет.")
+        mlines.extend(
+            [
+                "",
+                f"✅ Завершённых выполнений по его заданиям: <b>{snap['executions_completed']}</b>",
+                f"   └ Оплачено менеджером (кнопка «Оплатить»): "
+                f"<b>{snap['paid_by_manager_count']}</b> шт. на <b>{snap['sum_paid_out_rub']:.2f}</b> руб.",
+                f"   └ Ждут оплаты от менеджера исполнителю: "
+                f"<b>{snap['awaiting_manager_payment_count']}</b> шт. на <b>{snap['sum_awaiting_manager_rub']:.2f}</b> руб.",
+                "",
+                f"🔄 Попыток сейчас в работе (модерация профиля / отзыв): <b>{snap['attempts_in_progress']}</b>",
+            ]
+        )
+        mtext = "\n".join(mlines)
+        for chunk in _telegram_text_chunks(mtext):
+            await cb.message.answer(chunk, parse_mode="HTML")
+
+
+@router.callback_query(F.data.startswith("admin:secacc_ok:"))
+async def admin_secacc_ok(cb: CallbackQuery, **data):
+    await cb.answer()
+    session = data["session"]
+    rid = int(cb.data.split(":")[2])
+    sar = SecondAccountReviewRepository(session)
+    rev = await sar.approve(rid)
+    if not rev:
+        await cb.message.answer("Уже обработано или заявка не найдена.")
+        return
+    await UserRepository(session).set_repeat_unlock_platform(rev.user_id, rev.platform, True)
+    try:
+        await cb.bot.send_message(
+            rev.user_id,
+            "✅ Второй аккаунт подтверждён. Снова нажмите «Приступить к заданию», выберите эту платформу и возьмите задание.",
+        )
+    except Exception:
+        pass
+    await cb.message.edit_reply_markup(reply_markup=None)
+
+
+@router.callback_query(F.data.startswith("admin:secacc_reject:"))
+async def admin_secacc_reject(cb: CallbackQuery, **data):
+    await cb.answer()
+    session = data["session"]
+    rid = int(cb.data.split(":")[2])
+    sar = SecondAccountReviewRepository(session)
+    rev = await sar.reject(rid, None)
+    if not rev:
+        await cb.message.answer("Уже обработано или заявка не найдена.")
+        return
+    try:
+        await cb.bot.send_message(
+            rev.user_id,
+            "❌ Проверка второго аккаунта не пройдена. Повторные задания на этой площадке недоступны.",
+        )
+    except Exception:
+        pass
+    await cb.message.edit_reply_markup(reply_markup=None)
 
 
 @router.callback_query(F.data.startswith("admin:allow:"))
@@ -282,7 +460,9 @@ async def allow_attempt(cb: CallbackQuery, **data):
     await cb.bot.send_message(
         attempt.user_id,
         f"✅ Вы допущены! Ваша инструкция: {task.instruction_url}\n\n"
-        "✍️ Этап 2/3: Напишите отзыв по инструкции. После публикации пришлите в чат скриншот готового отзыва.",
+        "✍️ Этап 2/3: Опубликуйте отзыв по инструкции и пришлите сюда скриншот готового отзыва.\n\n"
+        "❗️ Перед отправкой скрина укажите реквизиты для выплаты: "
+        "«💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты».",
         reply_markup=cancel_attempt_kb(),
     )
     await cb.message.edit_reply_markup(reply_markup=None)
@@ -318,32 +498,50 @@ async def review_ok(cb: CallbackQuery, **data):
     session = data["session"]
     attempt_repo = AttemptRepository(session)
     task_repo = TaskItemRepository(session)
-    user_repo = UserRepository(session)
-    bal_repo = BalanceRepository(session)
-    ref_repo = ReferralRepository(session)
     attempt_id = int(cb.data.split(":")[2])
     attempt = await attempt_repo.complete(attempt_id)
     if not attempt:
         return
     task = await task_repo.get_by_id(attempt.task_item_id)
-    amount = float(task.price)
-    await user_repo.add_balance(attempt.user_id, amount)
-    await bal_repo.add_operation(attempt.user_id, amount, "task_reward", f"Задание {task.id}")
+    if not task:
+        return
 
-    # Реферальные начисления (1 уровень: 20%, 2 уровень: 5%)
-    ref1_id = await ref_repo.get_referrer_for_referee(attempt.user_id)
-    if ref1_id and ref1_id != attempt.user_id:
-        comm1 = amount * 0.20
-        await user_repo.add_balance(ref1_id, comm1)
-        await bal_repo.add_operation(ref1_id, comm1, "referral_commission_l1", f"Комиссия за реферала (задание {task.id})")
+    # Задание менеджера: деньги после нажатия «Оплатил» у менеджера
+    if task.created_by_user_id is not None:
+        req = (attempt.payout_requisites or "").strip() or "не указаны"
+        mgr_id = task.created_by_user_id
+        notify = (
+            "✅ Отзыв по вашему заданию подтверждён проверяющим.\n"
+            f"Задание #{task.id} | {task.platform}\n"
+            f"Сумма к выплате: {float(task.price):.2f} руб.\n\n"
+            f"Реквизиты исполнителя:\n{req}\n\n"
+            "Вы оплатили этот отзыв✅"
+        )
+        try:
+            await cb.bot.send_message(mgr_id, notify, reply_markup=manager_payout_kb(attempt_id))
+        except Exception:
+            pass
+        await cb.bot.send_message(
+            attempt.user_id,
+            "✅ Отзыв принят проверяющим. После оплаты от заказчика вознаграждение будет зачислено на баланс.",
+        )
+        await cb.message.edit_reply_markup(reply_markup=None)
+        return
 
-        ref2_id = await ref_repo.get_referrer_for_referee(ref1_id)
-        if ref2_id and ref2_id != ref1_id and ref2_id != attempt.user_id:
-            comm2 = amount * 0.05
-            await user_repo.add_balance(ref2_id, comm2)
-            await bal_repo.add_operation(ref2_id, comm2, "referral_commission_l2", f"Комиссия за реферала 2 уровня (задание {task.id})")
-
-    await cb.bot.send_message(attempt.user_id, f"✅ Ваш отзыв принят! На баланс зачислено {amount:.2f} руб.")
+    amount = await grant_task_completion_rewards(session, attempt.user_id, task)
+    await attempt_repo.mark_balance_credited(attempt_id)
+    await cb.bot.send_message(attempt.user_id, f"✅ Ваш отзыв принят и оплачен! На баланс зачислено {amount:.2f} руб.")
+    for aid in ADMIN_IDS:
+        try:
+            await cb.bot.send_message(
+                aid,
+                "✅ Отзыв оплачен (вознаграждение зачислено исполнителю на баланс в боте).\n"
+                f"Исполнитель ID: {attempt.user_id}\n"
+                f"Задание #{task.id} | {task.platform}\n"
+                f"Сумма: {amount:.2f} руб.",
+            )
+        except Exception:
+            pass
     await cb.message.edit_reply_markup(reply_markup=None)
 
 
@@ -727,50 +925,4 @@ async def settings_show(cb: CallbackQuery, **data):
         "set_min_review_google <число>\n"
         "set_min_review_2gis <число>"
     )
-
-
-@router.message(F.text.startswith("set_welcome "))
-async def set_welcome(message: Message, **data):
-    # Полная замена: старый текст полностью удаляется, вставляется новый.
-    payload = message.text[len("set_welcome ") :].strip()
-    await SettingsRepository(data["session"]).set_field("welcome_text", payload)
-    await message.answer("Обновлено.")
-
-
-@router.message(F.text.startswith("set_help "))
-async def set_help(message: Message, **data):
-    # Полная замена: старый текст полностью удаляется, вставляется новый.
-    payload = message.text[len("set_help ") :].strip()
-    await SettingsRepository(data["session"]).set_field("help_text", payload)
-    await message.answer("Обновлено.")
-
-
-@router.message(F.text.startswith("set_min_withdraw "))
-async def set_min_withdraw(message: Message, **data):
-    await SettingsRepository(data["session"]).set_field("min_withdraw_amount", int(message.text.split()[1]))
-    await message.answer("Обновлено.")
-
-
-@router.message(F.text.startswith("set_min_review_yandex "))
-async def set_min_review_yandex(message: Message, **data):
-    await SettingsRepository(data["session"]).set_field(
-        "min_review_price_yandex", int(message.text.split(maxsplit=1)[1])
-    )
-    await message.answer("Обновлено.")
-
-
-@router.message(F.text.startswith("set_min_review_google "))
-async def set_min_review_google(message: Message, **data):
-    await SettingsRepository(data["session"]).set_field(
-        "min_review_price_google", int(message.text.split(maxsplit=1)[1])
-    )
-    await message.answer("Обновлено.")
-
-
-@router.message(F.text.startswith("set_min_review_2gis "))
-async def set_min_review_2gis(message: Message, **data):
-    await SettingsRepository(data["session"]).set_field(
-        "min_review_price_2gis", int(message.text.split(maxsplit=1)[1])
-    )
-    await message.answer("Обновлено.")
 

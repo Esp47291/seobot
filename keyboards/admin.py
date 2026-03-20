@@ -16,6 +16,17 @@ def admin_main() -> InlineKeyboardMarkup:
     )
 
 
+def second_account_moderation_kb(review_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Принять", callback_data=f"admin:secacc_ok:{review_id}"),
+                InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin:secacc_reject:{review_id}"),
+            ]
+        ]
+    )
+
+
 def moderation_kb(attempt_id: int, stage: str) -> InlineKeyboardMarkup:
     if stage == "pre":
         return InlineKeyboardMarkup(
