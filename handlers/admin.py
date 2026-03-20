@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Админ-хендлеры для SeoJob / Отзовик."""
+import json
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -10,7 +11,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 
 from config import ADMIN_IDS
-from database.models import User
+from database.models import Attempt, User
 from database import (
     AttemptRepository,
     BalanceRepository,
@@ -21,13 +22,80 @@ from database import (
     UserRepository,
     WithdrawalRepository,
 )
-from keyboards.admin import admin_main, users_manage_kb, withdraw_kb
+from keyboards.admin import admin_main, moderation_kb, users_manage_kb, withdraw_kb
 from keyboards.manager import manager_payout_kb
-from keyboards.user import cancel_attempt_kb
+from keyboards.user import cancel_attempt_kb, main_menu
 from services.task_payout import grant_task_completion_rewards
 from utils.fsm import AdminFSM
 
 router = Router(name="admin")
+
+
+@router.callback_query(F.data == "admin:admission_queue")
+async def admission_queue(cb: CallbackQuery, **data):
+    """
+    One-click queue:
+    - waiting_approval: допуск к заданиям (этап до "approved")
+    - review_submitted: подтверждение отзывов (этап до "completed")
+    """
+    await cb.answer()
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    task_repo = TaskItemRepository(session)
+
+    # waiting for "Допустить/Отказать"
+    waiting = await session.execute(
+        select(Attempt).where(Attempt.status == "waiting_approval").order_by(Attempt.id.desc())
+    )
+    waiting_attempts = list(waiting.scalars().all())
+
+    # waiting for "Отзыв принят/Отзыв отклонен"
+    review = await session.execute(
+        select(Attempt).where(Attempt.status == "review_submitted").order_by(Attempt.id.desc())
+    )
+    review_attempts = list(review.scalars().all())
+
+    if not waiting_attempts and not review_attempts:
+        await cb.message.answer("Нет активных заявок на допуск и подтверждение отзывов.")
+        return
+
+    if waiting_attempts:
+        await cb.message.answer(f"🟡 Заявки на допуск к заданиям: {len(waiting_attempts)}")
+        for at in waiting_attempts:
+            task = await task_repo.get_by_id(at.task_item_id)
+            platform = getattr(task, "platform", None) if task else None
+            venue_city = getattr(task, "venue_city", None) if task else None
+            sphere = getattr(task, "sphere", None) if task else None
+            try:
+                price = float(getattr(task, "price", 0) or 0)
+            except Exception:
+                price = 0.0
+            await cb.message.answer(
+                f"🧾 Заявка #{at.id}\n"
+                f"Исполнитель ID: {at.user_id}\n"
+                f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
+                f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
+                reply_markup=moderation_kb(at.id, "pre"),
+            )
+
+    if review_attempts:
+        await cb.message.answer(f"🟢 Подтверждение отзывов: {len(review_attempts)}")
+        for at in review_attempts:
+            task = await task_repo.get_by_id(at.task_item_id)
+            platform = getattr(task, "platform", None) if task else None
+            venue_city = getattr(task, "venue_city", None) if task else None
+            sphere = getattr(task, "sphere", None) if task else None
+            try:
+                price = float(getattr(task, "price", 0) or 0)
+            except Exception:
+                price = 0.0
+            await cb.message.answer(
+                f"🧾 Отзыв на подтверждении #{at.id}\n"
+                f"Исполнитель ID: {at.user_id}\n"
+                f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
+                f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
+                reply_markup=moderation_kb(at.id, "review"),
+            )
 
 
 def _telegram_text_chunks(text: str, max_len: int = 3800) -> list[str]:
@@ -87,7 +155,7 @@ async def tasks_add_start(cb: CallbackQuery, state: FSMContext, **data):
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     await cb.message.answer(
-        "Шаг 1/6.\nВыберите платформу:",
+        "Шаг 1/8.\nВыберите платформу:",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="Яндекс карты", callback_data="admin:tasks_plat:yandex")],
@@ -105,7 +173,7 @@ async def tasks_plat_yandex(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(AdminFSM.waiting_task_price)
     await state.update_data(platform="Яндекс карты")
-    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:2gis")
@@ -114,7 +182,7 @@ async def tasks_plat_2gis(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(AdminFSM.waiting_task_price)
     await state.update_data(platform="2ГИС")
-    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:google")
@@ -123,7 +191,7 @@ async def tasks_plat_google(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(AdminFSM.waiting_task_price)
     await state.update_data(platform="Google карты")
-    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:other")
@@ -131,7 +199,7 @@ async def tasks_plat_other(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.clear()
     await state.set_state(AdminFSM.waiting_task_platform)
-    await cb.message.answer("Шаг 1/6.\nНапишите название платформы.\n\nПример: `Яндекс карты`")
+    await cb.message.answer("Шаг 1/8.\nНапишите название платформы.\n\nПример: `Яндекс карты`")
 
 
 @router.message(AdminFSM.waiting_task_platform, F.text)
@@ -142,7 +210,7 @@ async def tasks_add_platform(message: Message, state: FSMContext, **data):
         return
     await state.update_data(platform=message.text.strip())
     await state.set_state(AdminFSM.waiting_task_price)
-    await message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
+    await message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.message(AdminFSM.waiting_task_price, F.text)
@@ -179,7 +247,7 @@ async def tasks_add_price(message: Message, state: FSMContext, **data):
     await state.update_data(price=float(price))
     await state.set_state(AdminFSM.waiting_task_venue_city)
     await message.answer(
-        "Шаг 3/6.\nУкажите <b>город организации</b> (где находится заведение). "
+        "Шаг 3/8.\nУкажите <b>город организации</b> (где находится заведение). "
         "Это увидит исполнитель на карточке задания.\n\n"
         "Пример: Москва, Казань",
         parse_mode="HTML",
@@ -199,7 +267,7 @@ async def tasks_add_venue_city(message: Message, state: FSMContext, **data):
     await state.update_data(venue_city=venue_city)
     await state.set_state(AdminFSM.waiting_task_sphere)
     await message.answer(
-        "Шаг 4/6.\nУкажите <b>сферу бизнеса</b> организации (исполнитель увидит это на карточке).\n\n"
+        "Шаг 4/8.\nУкажите <b>сферу бизнеса</b> организации (исполнитель увидит это на карточке).\n\n"
         "Пример: кафе, автосервис, стоматология, салон красоты",
         parse_mode="HTML",
     )
@@ -217,7 +285,7 @@ async def tasks_add_sphere(message: Message, state: FSMContext, **data):
         return
     await state.update_data(task_sphere=sphere)
     await state.set_state(AdminFSM.waiting_task_instruction)
-    await message.answer("Шаг 5/6.\nНапишите инструкцию для исполнителя.")
+    await message.answer("Шаг 5/8.\nНапишите инструкцию для исполнителя.")
 
 
 @router.message(AdminFSM.waiting_task_instruction, F.text)
@@ -227,8 +295,149 @@ async def tasks_add_instruction(message: Message, state: FSMContext, **data):
         await message.answer("Отменено.", reply_markup=admin_main())
         return
     await state.update_data(instruction_text=message.text.strip())
+    await state.set_state(AdminFSM.waiting_task_prebuilt_mode)
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await message.answer(
+        "Шаг 6/8.\nДобавить готовые тексты для отзыва?\n\n"
+        "После этого задания новые тексты добавить будет нельзя.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Готовые тексты", callback_data="admin:tasks_prebuilt_yes")],
+                [InlineKeyboardButton(text="⏭️ Без готовых текстов", callback_data="admin:tasks_prebuilt_no")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data == "admin:tasks_prebuilt_yes")
+async def tasks_prebuilt_yes(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    await state.update_data(prebuilt_texts=[])
+    await state.set_state(AdminFSM.waiting_task_prebuilt_texts)
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    done_kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="admin:tasks_prebuilt_done")]]
+    )
+    await cb.message.answer(
+        "Шаг 6/8.\nОтправляйте готовые тексты по очереди: 1 текст = 1 сообщение.\n"
+        "Каждый текст будет выдан только одному исполнителю.\n\n"
+        "Когда закончите — нажмите «✅ Готово».",
+        reply_markup=done_kb,
+    )
+
+
+@router.callback_query(F.data == "admin:tasks_prebuilt_no")
+async def tasks_prebuilt_no(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    await state.update_data(prebuilt_texts=[])
+    await state.set_state(AdminFSM.waiting_task_prebuilt_mode)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await cb.message.answer(
+        "Шаг 7/8.\nСколько раз ваше задание нужно выдавать в день?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="1", callback_data="admin:tasks_daily:1")],
+                [InlineKeyboardButton(text="2", callback_data="admin:tasks_daily:2")],
+                [InlineKeyboardButton(text="5", callback_data="admin:tasks_daily:5")],
+                [InlineKeyboardButton(text="Свой вариант (1..10)", callback_data="admin:tasks_daily:custom")],
+            ]
+        ),
+    )
+
+
+@router.message(AdminFSM.waiting_task_prebuilt_texts, F.text)
+async def tasks_prebuilt_texts_collect(message: Message, state: FSMContext, **data):
+    if message.text.strip() == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+
+    text = message.text.strip()
+    if not text:
+        return
+
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    texts.append(text)
+    await state.update_data(prebuilt_texts=texts)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    done_kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="admin:tasks_prebuilt_done")]]
+    )
+    await message.answer(
+        f"✅ Текст добавлен (всего: {len(texts)}). Отправьте следующий или нажмите «✅ Готово».",
+        reply_markup=done_kb,
+    )
+
+
+@router.callback_query(F.data == "admin:tasks_prebuilt_done")
+async def tasks_prebuilt_done(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    if not texts:
+        await cb.message.answer("Сначала добавьте хотя бы 1 готовый текст.")
+        return
+
+    await state.set_state(AdminFSM.waiting_task_prebuilt_mode)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await cb.message.answer(
+        "Шаг 7/8.\nСколько раз ваше задание нужно выдавать в день?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="1", callback_data="admin:tasks_daily:1")],
+                [InlineKeyboardButton(text="2", callback_data="admin:tasks_daily:2")],
+                [InlineKeyboardButton(text="5", callback_data="admin:tasks_daily:5")],
+                [InlineKeyboardButton(text="Свой вариант (1..10)", callback_data="admin:tasks_daily:custom")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.in_(["admin:tasks_daily:1", "admin:tasks_daily:2", "admin:tasks_daily:5"]))
+async def tasks_daily_fixed(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    value = int(cb.data.split(":")[-1])
+    await state.update_data(daily_issue_count=value)
     await state.set_state(AdminFSM.waiting_task_venue_link)
-    await message.answer("Шаг 6/6.\nДобавьте ссылку на заведение, где нужно оставить отзыв.")
+    await cb.message.answer("Шаг 8/8.\nДобавьте ссылку на заведение, где нужно оставить отзыв.")
+
+
+@router.callback_query(F.data == "admin:tasks_daily:custom")
+async def tasks_daily_custom_start(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    await state.set_state(AdminFSM.waiting_task_daily_custom)
+    await cb.message.answer("Введите число от 1 до 10.")
+
+
+@router.message(AdminFSM.waiting_task_daily_custom, F.text)
+async def tasks_daily_custom_finish(message: Message, state: FSMContext, **data):
+    if message.text.strip() == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+
+    try:
+        value = int(message.text.strip())
+    except Exception:
+        await message.answer("Введите целое число от 1 до 10.")
+        return
+
+    if value < 1 or value > 10:
+        await message.answer("Число должно быть в диапазоне 1..10.")
+        return
+
+    await state.update_data(daily_issue_count=value)
+    await state.set_state(AdminFSM.waiting_task_venue_link)
+    await message.answer("Шаг 8/8.\nДобавьте ссылку на заведение, где нужно оставить отзыв.")
 
 
 @router.message(AdminFSM.waiting_task_venue_link, F.text)
@@ -243,6 +452,8 @@ async def tasks_add_venue_link(message: Message, state: FSMContext, **data):
 
     platform = (d.get("platform") or "").strip()
     instruction_text = (d.get("instruction_text") or "").strip()
+    daily_issue_count = d.get("daily_issue_count")
+    prebuilt_texts = list(d.get("prebuilt_texts") or [])
     venue_url = message.text.strip()
     venue_city = (d.get("venue_city") or "").strip()
     task_sphere = (d.get("task_sphere") or "").strip()
@@ -263,6 +474,10 @@ async def tasks_add_venue_link(message: Message, state: FSMContext, **data):
         await state.clear()
         await message.answer("Ошибка: инструкция не указана.")
         return
+    if daily_issue_count is None:
+        await state.clear()
+        await message.answer("Ошибка: лимит выдачи в день не задан.")
+        return
     if not venue_url.startswith("http"):
         await message.answer("Ссылка должна начинаться с `http`/`https`.")
         return
@@ -275,6 +490,8 @@ async def tasks_add_venue_link(message: Message, state: FSMContext, **data):
         venue_city=venue_city,
         price=float(price),
         instruction_url=f"{instruction_text}\n\nСсылка на заведение для отзыва: {venue_url}",
+        daily_issue_count=int(daily_issue_count),
+        prebuilt_texts_json=json.dumps(prebuilt_texts, ensure_ascii=False),
     )
     await state.clear()
     await message.answer(
@@ -453,18 +670,84 @@ async def allow_attempt(cb: CallbackQuery, **data):
     attempt_repo = AttemptRepository(session)
     task_repo = TaskItemRepository(session)
     attempt_id = int(cb.data.split(":")[2])
-    attempt = await attempt_repo.approve(attempt_id)
+    attempt = await attempt_repo.get_by_id(attempt_id)
     if not attempt:
         return
     task = await task_repo.get_by_id(attempt.task_item_id)
-    await cb.bot.send_message(
-        attempt.user_id,
+    if not task:
+        return
+
+    selected_prebuilt_text: str | None = None
+
+    # Если у задания есть готовые тексты — выдаём их по очереди по одному исполнителю.
+    prebuilt_texts: list[str] = []
+    try:
+        prebuilt_texts = json.loads(getattr(task, "prebuilt_texts_json", "[]") or "[]")
+        if not isinstance(prebuilt_texts, list):
+            prebuilt_texts = []
+    except Exception:
+        prebuilt_texts = []
+
+    cursor = int(getattr(task, "prebuilt_text_cursor", 0) or 0)
+    if prebuilt_texts and cursor < len(prebuilt_texts):
+        selected_prebuilt_text = prebuilt_texts[cursor]
+        task.prebuilt_text_cursor = cursor + 1
+
+        # Когда тексты закончатся — отключаем задание и уведомляем владельца.
+        if task.prebuilt_text_cursor >= len(prebuilt_texts):
+            task.is_active = False
+            if task.created_by_user_id is not None and not getattr(task, "prebuilt_texts_exhausted_notified", False):
+                task.prebuilt_texts_exhausted_notified = True
+                try:
+                    await cb.bot.send_message(
+                        task.created_by_user_id,
+                        "⚠️ Ваши готовые тексты для задания закончились.\n"
+                        f"Задание #{task.id} больше не будет выдаваться.\n\n"
+                        "Пожалуйста, удалите это задание и создайте новое с новыми текстами.",
+                    )
+                except Exception:
+                    pass
+
+        await session.flush()
+    elif prebuilt_texts and cursor >= len(prebuilt_texts):
+        # Тексты уже закончились: не одобряем попытку.
+        if task.created_by_user_id is not None:
+            if not getattr(task, "prebuilt_texts_exhausted_notified", False):
+                task.prebuilt_texts_exhausted_notified = True
+            task.is_active = False
+            try:
+                await cb.bot.send_message(
+                    task.created_by_user_id,
+                    "⚠️ Ваши готовые тексты для задания уже закончились.\n"
+                    f"Задание #{task.id} отключено.",
+                )
+            except Exception:
+                pass
+
+        await attempt_repo.decline(attempt_id, "Готовые тексты для задания закончились.")
+        await cb.message.edit_reply_markup(reply_markup=None)
+        try:
+            await cb.bot.send_message(
+                attempt.user_id,
+                "К сожалению, готовые тексты для этого задания закончились. Попробуйте выбрать другое задание в меню.",
+                reply_markup=main_menu(),
+            )
+        except Exception:
+            pass
+        return
+
+    attempt = await attempt_repo.approve(attempt_id)
+    if not attempt:
+        return
+    text = (
         f"✅ Вы допущены! Ваша инструкция: {task.instruction_url}\n\n"
-        "✍️ Этап 2/3: Опубликуйте отзыв по инструкции и пришлите сюда скриншот готового отзыва.\n\n"
-        "❗️ Перед отправкой скрина укажите реквизиты для выплаты: "
-        "«💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты».",
-        reply_markup=cancel_attempt_kb(),
+        "✍️ Этап 2/3: Опубликуйте отзыв по инструкции и пришлите сюда скриншот готового отзыва.\n"
     )
+    if selected_prebuilt_text:
+        text += f"\n📝 Готовый текст для отзыва:\n{selected_prebuilt_text}\n"
+    text += "\n❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
+
+    await cb.bot.send_message(attempt.user_id, text, reply_markup=cancel_attempt_kb())
     await cb.message.edit_reply_markup(reply_markup=None)
 
 

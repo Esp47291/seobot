@@ -23,7 +23,10 @@ class ManagerFSM(StatesGroup):
     waiting_task_venue_city = State()
     waiting_task_sphere = State()
     waiting_task_instruction = State()
-    waiting_task_venue_link = State()
+    waiting_task_prebuilt_mode = State()  # шаг 6: готовые тексты / без них
+    waiting_task_prebuilt_texts = State()  # шаг 6: ввод готовых текстов (по 1 сообщению)
+    waiting_task_daily_custom = State()  # шаг 7: ввод своего числа (1..10)
+    waiting_task_venue_link = State()  # шаг 8: ссылка
     waiting_broadcast_content = State()
 
 
@@ -36,7 +39,10 @@ class AdminFSM(StatesGroup):
     waiting_task_venue_city = State()  # шаг 3 — город организации для карточки
     waiting_task_sphere = State()  # шаг 4 — сфера для карточки
     waiting_task_instruction = State()  # шаг 5
-    waiting_task_venue_link = State()  # шаг 6
+    waiting_task_prebuilt_mode = State()  # шаг 6: готовые тексты / без них
+    waiting_task_prebuilt_texts = State()  # шаг 6: ввод готовых текстов (по 1 сообщению)
+    waiting_task_daily_custom = State()  # шаг 7: ввод своего числа (1..10)
+    waiting_task_venue_link = State()  # шаг 8: ссылка
     waiting_broadcast_content = State()
     waiting_target_user = State()
     waiting_user_query = State()

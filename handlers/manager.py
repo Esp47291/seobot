@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Панель менеджера: /manager — свои задания, личная рассылка, выплаты исполнителям по кнопке «Оплатил»."""
+import json
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -59,7 +60,7 @@ async def mgr_tasks_add_start(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.clear()
     await cb.message.answer(
-        "Шаг 1/6.\nВыберите платформу:",
+        "Шаг 1/8.\nВыберите платформу:",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="Яндекс карты", callback_data="mgr:tasks_plat:yandex")],
@@ -77,7 +78,7 @@ async def mgr_tasks_plat_yandex(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(ManagerFSM.waiting_task_price)
     await state.update_data(platform="Яндекс карты")
-    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "mgr:tasks_plat:2gis")
@@ -86,7 +87,7 @@ async def mgr_tasks_plat_2gis(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(ManagerFSM.waiting_task_price)
     await state.update_data(platform="2ГИС")
-    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "mgr:tasks_plat:google")
@@ -95,7 +96,7 @@ async def mgr_tasks_plat_google(cb: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(ManagerFSM.waiting_task_price)
     await state.update_data(platform="Google карты")
-    await cb.message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.callback_query(F.data == "mgr:tasks_plat:other")
@@ -103,7 +104,7 @@ async def mgr_tasks_plat_other(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await state.clear()
     await state.set_state(ManagerFSM.waiting_task_platform)
-    await cb.message.answer("Шаг 1/6.\nНапишите название платформы.\n\nПример: `Яндекс карты`")
+    await cb.message.answer("Шаг 1/8.\nНапишите название платформы.\n\nПример: `Яндекс карты`")
 
 
 @router.message(ManagerFSM.waiting_task_platform, F.text)
@@ -114,7 +115,7 @@ async def mgr_tasks_add_platform(message: Message, state: FSMContext, **data):
         return
     await state.update_data(platform=message.text.strip())
     await state.set_state(ManagerFSM.waiting_task_price)
-    await message.answer("Шаг 2/6.\nНапишите цену за отзыв (число). Например: 120")
+    await message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.message(ManagerFSM.waiting_task_price, F.text)
@@ -150,7 +151,7 @@ async def mgr_tasks_add_price(message: Message, state: FSMContext, **data):
     await state.update_data(price=float(price))
     await state.set_state(ManagerFSM.waiting_task_venue_city)
     await message.answer(
-        "Шаг 3/6.\nУкажите <b>город организации</b> (где находится заведение). "
+        "Шаг 3/8.\nУкажите <b>город организации</b> (где находится заведение). "
         "Это увидит исполнитель на карточке задания.\n\n"
         "Пример: Москва, Казань",
         parse_mode="HTML",
@@ -170,7 +171,7 @@ async def mgr_tasks_add_venue_city(message: Message, state: FSMContext, **data):
     await state.update_data(venue_city=venue_city)
     await state.set_state(ManagerFSM.waiting_task_sphere)
     await message.answer(
-        "Шаг 4/6.\nУкажите <b>сферу бизнеса</b> организации (исполнитель увидит это на карточке).\n\n"
+        "Шаг 4/8.\nУкажите <b>сферу бизнеса</b> организации (исполнитель увидит это на карточке).\n\n"
         "Пример: кафе, автосервис, стоматология, салон красоты",
         parse_mode="HTML",
     )
@@ -188,7 +189,7 @@ async def mgr_tasks_add_sphere(message: Message, state: FSMContext, **data):
         return
     await state.update_data(task_sphere=sphere)
     await state.set_state(ManagerFSM.waiting_task_instruction)
-    await message.answer("Шаг 5/6.\nНапишите инструкцию для исполнителя.")
+    await message.answer("Шаг 5/8.\nНапишите инструкцию для исполнителя.")
 
 
 @router.message(ManagerFSM.waiting_task_instruction, F.text)
@@ -198,8 +199,138 @@ async def mgr_tasks_add_instruction(message: Message, state: FSMContext, **data)
         await message.answer("Отменено.", reply_markup=manager_main())
         return
     await state.update_data(instruction_text=message.text.strip())
+    await state.set_state(ManagerFSM.waiting_task_prebuilt_mode)
+
+    await message.answer(
+        "Шаг 6/8.\nДобавить готовые тексты для отзыва?\n\n"
+        "После этого задания новые тексты добавить будет нельзя.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Готовые тексты", callback_data="mgr:tasks_prebuilt_yes")],
+                [InlineKeyboardButton(text="⏭️ Без готовых текстов", callback_data="mgr:tasks_prebuilt_no")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data == "mgr:tasks_prebuilt_yes")
+async def mgr_tasks_prebuilt_yes(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await state.update_data(prebuilt_texts=[])
+    await state.set_state(ManagerFSM.waiting_task_prebuilt_texts)
+    await cb.message.answer(
+        "Шаг 6/8.\nОтправляйте готовые тексты по очереди: 1 текст = 1 сообщение.\n"
+        "Каждый текст будет выдан только одному исполнителю.\n\n"
+        "Когда закончите — нажмите «✅ Готово».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
+        ),
+    )
+
+
+@router.callback_query(F.data == "mgr:tasks_prebuilt_no")
+async def mgr_tasks_prebuilt_no(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await state.update_data(prebuilt_texts=[])
+    await state.set_state(ManagerFSM.waiting_task_prebuilt_mode)
+
+    await cb.message.answer(
+        "Шаг 7/8.\nСколько раз ваше задание нужно выдавать в день?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="1", callback_data="mgr:tasks_daily:1")],
+                [InlineKeyboardButton(text="2", callback_data="mgr:tasks_daily:2")],
+                [InlineKeyboardButton(text="5", callback_data="mgr:tasks_daily:5")],
+                [InlineKeyboardButton(text="Свой вариант (1..10)", callback_data="mgr:tasks_daily:custom")],
+            ]
+        ),
+    )
+
+
+@router.message(ManagerFSM.waiting_task_prebuilt_texts, F.text)
+async def mgr_tasks_prebuilt_texts_collect(message: Message, state: FSMContext, **data):
+    if message.text.strip() == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=manager_main())
+        return
+
+    text = message.text.strip()
+    if not text:
+        return
+
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    texts.append(text)
+    await state.update_data(prebuilt_texts=texts)
+
+    await message.answer(
+        f"✅ Текст добавлен (всего: {len(texts)}). Отправьте следующий или нажмите «✅ Готово».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
+        ),
+    )
+
+
+@router.callback_query(F.data == "mgr:tasks_prebuilt_done")
+async def mgr_tasks_prebuilt_done(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    if not texts:
+        await cb.message.answer("Сначала добавьте хотя бы 1 готовый текст.")
+        return
+
+    await state.set_state(ManagerFSM.waiting_task_prebuilt_mode)
+
+    await cb.message.answer(
+        "Шаг 7/8.\nСколько раз ваше задание нужно выдавать в день?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="1", callback_data="mgr:tasks_daily:1")],
+                [InlineKeyboardButton(text="2", callback_data="mgr:tasks_daily:2")],
+                [InlineKeyboardButton(text="5", callback_data="mgr:tasks_daily:5")],
+                [InlineKeyboardButton(text="Свой вариант (1..10)", callback_data="mgr:tasks_daily:custom")],
+            ]
+        ),
+    )
+
+
+@router.callback_query(F.data.in_(["mgr:tasks_daily:1", "mgr:tasks_daily:2", "mgr:tasks_daily:5"]))
+async def mgr_tasks_daily_fixed(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    value = int(cb.data.split(":")[-1])
+    await state.update_data(daily_issue_count=value)
     await state.set_state(ManagerFSM.waiting_task_venue_link)
-    await message.answer("Шаг 6/6.\nДобавьте ссылку на заведение, где нужно оставить отзыв.")
+    await cb.message.answer("Шаг 8/8.\nДобавьте ссылку на заведение, где нужно оставить отзыв.")
+
+
+@router.callback_query(F.data == "mgr:tasks_daily:custom")
+async def mgr_tasks_daily_custom_start(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await state.set_state(ManagerFSM.waiting_task_daily_custom)
+    await cb.message.answer("Введите число от 1 до 10.")
+
+
+@router.message(ManagerFSM.waiting_task_daily_custom, F.text)
+async def mgr_tasks_daily_custom_finish(message: Message, state: FSMContext):
+    if message.text.strip() == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=manager_main())
+        return
+
+    try:
+        value = int(message.text.strip())
+    except Exception:
+        await message.answer("Введите целое число от 1 до 10.")
+        return
+
+    if value < 1 or value > 10:
+        await message.answer("Число должно быть в диапазоне 1..10.")
+        return
+
+    await state.update_data(daily_issue_count=value)
+    await state.set_state(ManagerFSM.waiting_task_venue_link)
+    await message.answer("Шаг 8/8.\nДобавьте ссылку на заведение, где нужно оставить отзыв.")
 
 
 @router.message(ManagerFSM.waiting_task_venue_link, F.text)
@@ -214,6 +345,8 @@ async def mgr_tasks_add_venue_link(message: Message, state: FSMContext, **data):
 
     platform = (d.get("platform") or "").strip()
     instruction_text = (d.get("instruction_text") or "").strip()
+    daily_issue_count = d.get("daily_issue_count")
+    prebuilt_texts = list(d.get("prebuilt_texts") or [])
     venue_url = message.text.strip()
     venue_city = (d.get("venue_city") or "").strip()
     task_sphere = (d.get("task_sphere") or "").strip()
@@ -234,6 +367,10 @@ async def mgr_tasks_add_venue_link(message: Message, state: FSMContext, **data):
         await state.clear()
         await message.answer("Ошибка: инструкция не указана.")
         return
+    if daily_issue_count is None:
+        await state.clear()
+        await message.answer("Ошибка: лимит выдачи в день не задан.")
+        return
     if not venue_url.startswith("http"):
         await message.answer("Ссылка должна начинаться с `http`/`https`.")
         return
@@ -246,6 +383,8 @@ async def mgr_tasks_add_venue_link(message: Message, state: FSMContext, **data):
         venue_city=venue_city,
         price=float(price),
         instruction_url=f"{instruction_text}\n\nСсылка на заведение для отзыва: {venue_url}",
+        daily_issue_count=int(daily_issue_count),
+        prebuilt_texts_json=json.dumps(prebuilt_texts, ensure_ascii=False),
         created_by_user_id=message.from_user.id,
     )
     await state.clear()

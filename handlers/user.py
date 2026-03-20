@@ -3,9 +3,9 @@
 from decimal import Decimal
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from config import ADMIN_IDS, SUPPORT_URL
 from database import (
@@ -30,6 +30,13 @@ from keyboards.user import (
 )
 from services.review_admin_instant import notify_admins_review_screenshot_received
 from utils.fsm import UserFSM
+from middlewares.rules import RULES_ACCEPT_CALLBACK_DATA
+
+NEWS_CHANNEL_URL = "https://t.me/Jobinsidenews"
+NEWS_PROMPT_TEXT = (
+    "Чтобы всегда быть в курсе событий, цен и обновлений, подпишитесь на наш новостной канал.\n\n"
+    "После подписки нажмите кнопку «✍️ Приступить к заданию»."
+)
 
 BLOCKED_TEXT = (
     "вы заблокированы по решению администрации, для разблокировки обратитесь к владельцу - @Exxzest"
@@ -87,7 +94,9 @@ async def _open_venue_city_choice(message: Message, state: FSMContext, session, 
     await state.set_state(UserFSM.choosing_venue_city)
     await state.update_data(venue_pick_list=pick_list, selected_venue_city=None)
     await message.answer(
-        "Выберите город, в котором находятся организации с заданиями:",
+        "Выберите город из предложенных — он должен быть максимально близким к вам.\n\n"
+        "Так мы снижаем риск отклонения от алгоритмов Яндекса: если вы территориально, например, в Сибири, "
+        "а оставляете отзыв на заведение в Краснодаре, отзыв может быть отклонён.",
         reply_markup=task_venue_cities_kb(pick_list, TASK_VENUE_EMPTY),
     )
     return True
@@ -204,6 +213,60 @@ async def start_cmd(message: Message, state: FSMContext, **data):
     await message.answer(settings.welcome_text, reply_markup=main_menu())
 
 
+@router.callback_query(F.data == RULES_ACCEPT_CALLBACK_DATA)
+async def accept_rules(cb: CallbackQuery, state: FSMContext, **data):
+    """Accept rules and unlock the bot (equivalent to starting the bot)."""
+    await cb.answer()
+    session = data["session"]
+
+    user_repo = UserRepository(session)
+    settings_repo = SettingsRepository(session)
+    user, _created = await user_repo.get_or_create(
+        user_id=cb.from_user.id,
+        username=cb.from_user.username,
+        first_name=cb.from_user.first_name,
+    )
+
+    if user.is_blocked and cb.from_user.id not in ADMIN_IDS:
+        await cb.message.answer(BLOCKED_TEXT)
+        return
+
+    user.rules_accepted = True
+    user.rules_prompted = True
+    await session.flush()
+
+    await state.clear()
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    settings = await settings_repo.get()
+    await cb.message.answer(settings.welcome_text, reply_markup=main_menu())
+
+
+@router.message(Command("menu"))
+async def menu_cmd(message: Message, state: FSMContext, **data):
+    """Alias for /start (return to main menu)."""
+    await state.clear()
+    session = data["session"]
+    user_repo = UserRepository(session)
+    settings_repo = SettingsRepository(session)
+
+    user, _created = await user_repo.get_or_create(
+        user_id=message.from_user.id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+    )
+    settings = await settings_repo.get()
+
+    if user.is_blocked:
+        await message.answer(BLOCKED_TEXT, reply_markup=main_menu())
+        return
+
+    await message.answer(settings.welcome_text, reply_markup=main_menu())
+
+
 @router.message(F.text == "✍️ Приступить к заданию")
 async def begin_tasks(message: Message, state: FSMContext, **data):
     session = data["session"]
@@ -212,6 +275,27 @@ async def begin_tasks(message: Message, state: FSMContext, **data):
     if not user:
         await message.answer("Нажмите /start.")
         return
+
+    # Additional gate before starting tasks: subscribe to the news channel.
+    if not getattr(user, "news_accepted", False):
+        # Show prompt only once. After that, we treat the user as "accepted"
+        # once they try to proceed again (since we only use a URL button).
+        if not getattr(user, "news_prompted", False):
+            user.news_prompted = True
+            await session.flush()
+            await message.answer(
+                NEWS_PROMPT_TEXT,
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="Job Inside", url=NEWS_CHANNEL_URL)],
+                    ]
+                ),
+            )
+            return
+
+        user.news_accepted = True
+        await session.flush()
+
     await _open_venue_city_choice(message, state, session, user)
 
 
@@ -651,6 +735,32 @@ async def withdraw_start(message: Message, state: FSMContext, **data):
     await message.answer(f"Введите сумму для вывода (доступно {float(user.balance):.2f} руб.):")
 
 
+# Cancel withdraw flow when user picks another main-menu item.
+# This prevents parsing "menu text" as a withdrawal amount.
+@router.message(UserFSM.waiting_withdraw_amount, F.text == "💰 Личный кабинет / Баланс")
+async def withdraw_cancel_to_cabinet_from_amount(message: Message, state: FSMContext, **data):
+    await state.clear()
+    await cabinet(message, **data)
+
+
+@router.message(UserFSM.waiting_withdraw_amount, F.text == "🆘 Помощь")
+async def withdraw_cancel_to_help_from_amount(message: Message, state: FSMContext, **data):
+    await state.clear()
+    await help_menu(message, **data)
+
+
+@router.message(UserFSM.waiting_withdraw_amount, F.text == "👥 Реферальная программа")
+async def withdraw_cancel_to_ref_from_amount(message: Message, state: FSMContext, **data):
+    await state.clear()
+    await referral_program(message, **data)
+
+
+@router.message(UserFSM.waiting_withdraw_amount, F.text == "✍️ Приступить к заданию")
+async def withdraw_cancel_to_tasks_from_amount(message: Message, state: FSMContext, **data):
+    await state.clear()
+    await begin_tasks(message, state, **data)
+
+
 @router.message(UserFSM.waiting_withdraw_amount, F.text)
 async def withdraw_amount(message: Message, state: FSMContext, **data):
     session = data["session"]
@@ -669,6 +779,30 @@ async def withdraw_amount(message: Message, state: FSMContext, **data):
     await state.update_data(withdraw_amount=float(amount))
     await state.set_state(UserFSM.waiting_withdraw_requisites)
     await message.answer("Введите ваши платежные реквизиты (номер карты, кошелек и т.д.):")
+
+
+@router.message(UserFSM.waiting_withdraw_requisites, F.text == "💰 Личный кабинет / Баланс")
+async def withdraw_cancel_to_cabinet_from_requisites(message: Message, state: FSMContext, **data):
+    await state.clear()
+    await cabinet(message, **data)
+
+
+@router.message(UserFSM.waiting_withdraw_requisites, F.text == "🆘 Помощь")
+async def withdraw_cancel_to_help_from_requisites(message: Message, state: FSMContext, **data):
+    await state.clear()
+    await help_menu(message, **data)
+
+
+@router.message(UserFSM.waiting_withdraw_requisites, F.text == "👥 Реферальная программа")
+async def withdraw_cancel_to_ref_from_requisites(message: Message, state: FSMContext, **data):
+    await state.clear()
+    await referral_program(message, **data)
+
+
+@router.message(UserFSM.waiting_withdraw_requisites, F.text == "✍️ Приступить к заданию")
+async def withdraw_cancel_to_tasks_from_requisites(message: Message, state: FSMContext, **data):
+    await state.clear()
+    await begin_tasks(message, state, **data)
 
 
 @router.message(UserFSM.waiting_withdraw_requisites, F.text)
@@ -734,7 +868,18 @@ async def help_menu(message: Message, **data):
     session = data["session"]
     settings_repo = SettingsRepository(session)
     settings = await settings_repo.get()
-    await message.answer(f"{settings.help_text}\n{SUPPORT_URL}")
+    # Не показываем "дефолтную" незавершенную ссылку.
+    support_url = (SUPPORT_URL or "").strip()
+    if support_url and support_url != "https://t.me/":
+        await message.answer(f"{settings.help_text}\n{support_url}")
+    else:
+        await message.answer(settings.help_text)
+
+
+@router.message(Command("help"))
+async def help_cmd(message: Message, **data):
+    """Alias for the '🆘 Помощь' button in the main menu."""
+    await help_menu(message, **data)
 
 
 @router.callback_query(F.data == "to_menu")

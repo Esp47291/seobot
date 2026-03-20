@@ -61,6 +61,14 @@ async def migrate_sqlite_schema() -> None:
         await _sqlite_add_column_if_missing(conn, "users", "payout_requisites", "payout_requisites TEXT")
         await _sqlite_add_column_if_missing(conn, "users", "task_rotation_json", "task_rotation_json TEXT DEFAULT '{}'")
         await _sqlite_add_column_if_missing(conn, "users", "repeat_unlock_json", "repeat_unlock_json TEXT DEFAULT '{}'")
+        await _sqlite_add_column_if_missing(conn, "task_items", "daily_issue_count", "daily_issue_count INTEGER")
+        await _sqlite_add_column_if_missing(conn, "task_items", "prebuilt_texts_json", "prebuilt_texts_json TEXT DEFAULT '[]'")
+        await _sqlite_add_column_if_missing(conn, "task_items", "prebuilt_text_cursor", "prebuilt_text_cursor INTEGER NOT NULL DEFAULT 0")
+        await _sqlite_add_column_if_missing(conn, "task_items", "prebuilt_texts_exhausted_notified", "prebuilt_texts_exhausted_notified INTEGER NOT NULL DEFAULT 0")
+        await _sqlite_add_column_if_missing(conn, "users", "rules_accepted", "rules_accepted INTEGER NOT NULL DEFAULT 0")
+        await _sqlite_add_column_if_missing(conn, "users", "rules_prompted", "rules_prompted INTEGER NOT NULL DEFAULT 0")
+        await _sqlite_add_column_if_missing(conn, "users", "news_accepted", "news_accepted INTEGER NOT NULL DEFAULT 0")
+        await _sqlite_add_column_if_missing(conn, "users", "news_prompted", "news_prompted INTEGER NOT NULL DEFAULT 0")
 
 
 async def init_db() -> None:

@@ -190,7 +190,8 @@ class TaskItemRepository:
             _venue_city_match_empty() if venue_city is None else _venue_city_match_value(venue_city),
         ]
         r = await self.session.execute(select(TaskItem).where(*conds).order_by(TaskItem.id))
-        return list(r.scalars().all())
+        tasks = list(r.scalars().all())
+        return await self._filter_by_daily_issue_count(tasks)
 
     async def get_platforms_by_city(self, city: str) -> list[str]:
         result = await self.session.execute(
@@ -214,7 +215,8 @@ class TaskItemRepository:
             )
             .order_by(TaskItem.id)
         )
-        return list(result.scalars().all())
+        tasks = list(result.scalars().all())
+        return await self._filter_by_daily_issue_count(tasks)
 
     async def get_by_id(self, task_item_id: int) -> TaskItem | None:
         result = await self.session.execute(select(TaskItem).where(TaskItem.id == task_item_id))
@@ -232,6 +234,8 @@ class TaskItemRepository:
         venue_city: str,
         price: float,
         instruction_url: str,
+        daily_issue_count: int | None = None,
+        prebuilt_texts_json: str = "[]",
         created_by_user_id: int | None = None,
     ) -> TaskItem:
         # Минимальная цена в зависимости от платформы
@@ -247,11 +251,49 @@ class TaskItemRepository:
             venue_city=(venue_city or "").strip(),
             price=price,
             instruction_url=instruction_url,
+            daily_issue_count=daily_issue_count,
+            prebuilt_texts_json=prebuilt_texts_json,
             created_by_user_id=created_by_user_id,
         )
         self.session.add(task)
         await self.session.flush()
         return task
+
+    async def _filter_by_daily_issue_count(self, tasks: list[TaskItem]) -> list[TaskItem]:
+        """Фильтрует задания по дневному лимиту выдачи."""
+        if not tasks:
+            return []
+
+        limited = [t for t in tasks if getattr(t, "daily_issue_count", None) is not None and int(t.daily_issue_count) > 0]
+        if not limited:
+            return tasks
+
+        start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        ids = [t.id for t in limited]
+
+        result = await self.session.execute(
+            select(Attempt.task_item_id, func.count())
+            .where(
+                Attempt.task_item_id.in_(ids),
+                Attempt.created_at >= start,
+                Attempt.created_at < end,
+                Attempt.status.notin_(["declined", "canceled"]),
+            )
+            .group_by(Attempt.task_item_id)
+        )
+        used_map: dict[int, int] = {int(task_id): int(cnt) for task_id, cnt in result.all()}
+
+        filtered: list[TaskItem] = []
+        for t in tasks:
+            lim = getattr(t, "daily_issue_count", None)
+            if lim is None:
+                filtered.append(t)
+                continue
+            used = used_map.get(int(t.id), 0)
+            if used < int(lim):
+                filtered.append(t)
+        return filtered
 
     async def update_field(self, task_item_id: int, field_name: str, value: str) -> bool:
         task = await self.get_by_id(task_item_id)
@@ -553,6 +595,23 @@ class SettingsRepository:
     async def get(self) -> BotSetting:
         item = await self.session.get(BotSetting, 1)
         if item:
+            # Backward-compatible default update:
+            # existing SQLite DB may already have old default welcome_text stored.
+            # We update only when it matches the previous built-in default to avoid
+            # overriding custom admin/manager settings.
+            old_default_welcome = "Добро пожаловать в SeoJob!\n\nВыберите действие в меню ниже."
+            new_default_welcome = (
+                "Добро пожаловать в Job Inside!\n\n"
+                "Выберите действие в меню ниже — и начнем зарабатывать.\n\n"
+                "✍️ Приступить к заданию\n"
+                "💰 Личный кабинет / Баланс\n"
+                "💸 Вывести средства\n"
+                "👥 Реферальная программа\n"
+                "🆘 Помощь"
+            )
+            if item.welcome_text.strip() == old_default_welcome.strip():
+                item.welcome_text = new_default_welcome
+                await self.session.flush()
             return item
         item = BotSetting(
             id=1,

@@ -26,6 +26,16 @@ class User(Base):
     # JSON: платформа -> true — после проверки «2-й аккаунт» можно снова брать задания (сбрасывается после нового completed)
     repeat_unlock_json: Mapped[str] = mapped_column(Text, default="{}")
 
+    # Согласие с правилами перед доступом к функционалу бота.
+    rules_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Чтобы не отправлять полное сообщение с правилами много раз.
+    rules_prompted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Согласие на допуск через подписку на новостной канал.
+    # Это не реальная проверка подписки — пользователь сам подтверждает кнопкой.
+    news_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    news_prompted: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 class SecondAccountReview(Base):
     """Модерация скрина второго аккаунта на площадке (чтобы снова брать задания по платформе)."""
@@ -53,6 +63,14 @@ class TaskItem(Base):
     sphere: Mapped[str] = mapped_column(String(255))
     instruction_url: Mapped[str] = mapped_column(String(1024))
     price: Mapped[float] = mapped_column(Numeric(10, 2))
+    # Сколько раз за день выдавать это задание. None = не ограничивать (для старых задач).
+    daily_issue_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Готовые тексты отзыва (по одному исполнителю). JSON-массив строк.
+    prebuilt_texts_json: Mapped[str] = mapped_column(Text, default="[]")
+    # Индекс следующего текста для выдачи.
+    prebuilt_text_cursor: Mapped[int] = mapped_column(Integer, default=0)
+    # Чтобы не спамить уведомлением менеджеру/админу после окончания текстов.
+    prebuilt_texts_exhausted_notified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     # Telegram user_id менеджера, разместившего задание; NULL = задание админа
@@ -110,8 +128,13 @@ class BotSetting(Base):
     welcome_text: Mapped[str] = mapped_column(
         Text,
         default=(
-            "Добро пожаловать в SeoJob!\n\n"
-            "Выберите действие в меню ниже."
+            "Добро пожаловать в Job Inside!\n\n"
+            "Выберите действие в меню ниже — и начнем зарабатывать.\n\n"
+            "✍️ Приступить к заданию\n"
+            "💰 Личный кабинет / Баланс\n"
+            "💸 Вывести средства\n"
+            "👥 Реферальная программа\n"
+            "🆘 Помощь"
         ),
     )
     help_text: Mapped[str] = mapped_column(

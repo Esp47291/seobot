@@ -4,6 +4,7 @@ from .admin import AdminOnlyMiddleware
 from .blocked import BlockedUserMiddleware
 from .manager import ManagerOnlyMiddleware
 from .staff import AdminOrManagerMiddleware
+from .rules import RulesAcceptanceMiddleware
 
 __all__ = [
     "DbSessionMiddleware",
@@ -11,4 +12,5 @@ __all__ = [
     "BlockedUserMiddleware",
     "ManagerOnlyMiddleware",
     "AdminOrManagerMiddleware",
+    "RulesAcceptanceMiddleware",
 ]

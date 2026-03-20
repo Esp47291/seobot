@@ -9,6 +9,7 @@ import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN, PROXY_URL
@@ -19,6 +20,7 @@ from middlewares import (
     BlockedUserMiddleware,
     DbSessionMiddleware,
     ManagerOnlyMiddleware,
+    RulesAcceptanceMiddleware,
 )
 from handlers import admin_router, manager_router, staff_settings_router, user_router
 from services.review_scheduler import start_scheduler
@@ -50,6 +52,20 @@ async def main() -> None:
     bot = Bot(token=BOT_TOKEN, session=session)
     dp = Dispatcher(storage=MemoryStorage())
 
+    # Show slash-command "micro menu" in Telegram UI.
+    # (Appears on typing "/" and is the same as main menu actions.)
+    try:
+        await bot.set_my_commands(
+            [
+                BotCommand(command="start", description="Перезапустить бота"),
+                BotCommand(command="menu", description="Вернуться в главное меню"),
+                BotCommand(command="help", description="Инструкция и помощь"),
+            ]
+        )
+    except Exception:
+        # If Telegram rejects command registration (or in restricted environments), bot still works.
+        logger.exception("Failed to set bot commands")
+
     # Сессия БД для всех хендлеров
     dp.update.middleware(DbSessionMiddleware())
 
@@ -57,10 +73,15 @@ async def main() -> None:
     # Если пользователь заблокирован — не даём выполнять действия
     user_router.message.middleware(BlockedUserMiddleware())
     user_router.callback_query.middleware(BlockedUserMiddleware())
+    # Не даём пользоваться ботом до согласия с правилами
+    user_router.message.middleware(RulesAcceptanceMiddleware())
+    user_router.callback_query.middleware(RulesAcceptanceMiddleware())
 
     # Менеджер: /manager и callback'и mgr:*
     manager_router.message.middleware(BlockedUserMiddleware())
     manager_router.callback_query.middleware(BlockedUserMiddleware())
+    manager_router.message.middleware(RulesAcceptanceMiddleware())
+    manager_router.callback_query.middleware(RulesAcceptanceMiddleware())
     manager_router.message.middleware(ManagerOnlyMiddleware())
     manager_router.callback_query.middleware(ManagerOnlyMiddleware())
     dp.include_router(manager_router)
@@ -68,11 +89,14 @@ async def main() -> None:
     # Команды set_welcome / set_help / set_min_* — и у админа, и у менеджера
     staff_settings_router.message.middleware(BlockedUserMiddleware())
     staff_settings_router.message.middleware(AdminOrManagerMiddleware())
+    staff_settings_router.message.middleware(RulesAcceptanceMiddleware())
     dp.include_router(staff_settings_router)
 
     # Админ-роутер: только ADMIN_IDS
     admin_router.message.middleware(AdminOnlyMiddleware())
+    admin_router.message.middleware(RulesAcceptanceMiddleware())
     admin_router.callback_query.middleware(AdminOnlyMiddleware())
+    admin_router.callback_query.middleware(RulesAcceptanceMiddleware())
     dp.include_router(admin_router)
     scheduler = start_scheduler(bot)
 
