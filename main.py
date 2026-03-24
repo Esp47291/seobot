@@ -47,6 +47,13 @@ async def main() -> None:
             os.makedirs(db_dir, exist_ok=True)
 
     await init_db()
+
+    # Netlify/CI build не предназначены для долгоживущего polling.
+    # Выходим успешно, чтобы сборка не падала.
+    if os.environ.get("NETLIFY") or os.environ.get("NETLIFY_BUILD_ID") or os.environ.get("NETLIFY_SITE_ID") or os.environ.get("CI"):
+        logger.warning("Обнаружено build/CI окружение: polling не запускается.")
+        return
+
     # Если сеть требует прокси — укажите PROXY_URL в .env (пример: http://127.0.0.1:10809)
     if PROXY_URL:
         logger.info("Используется прокси: %s", PROXY_URL)

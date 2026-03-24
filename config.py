@@ -15,6 +15,20 @@ def _parse_admin_ids(value: str) -> list[int]:
     return [int(x.strip()) for x in value.split(",") if x.strip().isdigit()]
 
 
+def _is_probably_netlify() -> bool:
+    # Netlify обычно выставляет переменные NETLIFY* и при этом во время "build" часть ФС read-only.
+    return bool(os.environ.get("NETLIFY") or os.environ.get("NETLIFY_BUILD_ID") or os.environ.get("NETLIFY_SITE_ID"))
+
+
+def _is_ci_environment() -> bool:
+    return bool(os.environ.get("CI"))
+
+
+def _is_localhost_proxy(url: str) -> bool:
+    value = (url or "").lower()
+    return "127.0.0.1" in value or "localhost" in value
+
+
 BOT_TOKEN: str = env.str("BOT_TOKEN", "")
 ADMIN_IDS: list[int] = _parse_admin_ids(env.str("ADMIN_IDS", ""))
 # ID менеджеров (через запятую): MANAGER_IDS=111,222
@@ -31,13 +45,13 @@ if not PROXY_URL:
 if not PROXY_URL:
     PROXY_URL = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
 
+if (_is_probably_netlify() or _is_ci_environment()) and _is_localhost_proxy(PROXY_URL):
+    # В облачных build/CI окружениях локальный прокси недоступен:
+    # 127.0.0.1 относится к контейнеру сборки, а не к вашей машине.
+    PROXY_URL = ""
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB_PATH = os.path.join(BASE_DIR, "data", "seobot.db")
-
-
-def _is_probably_netlify() -> bool:
-    # Netlify обычно выставляет переменные NETLIFY* и при этом во время "build" часть ФС read-only.
-    return bool(os.environ.get("NETLIFY") or os.environ.get("NETLIFY_BUILD_ID") or os.environ.get("NETLIFY_SITE_ID"))
 
 
 def _default_sqlite_db_path() -> str:
