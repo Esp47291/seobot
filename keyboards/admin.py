@@ -8,6 +8,7 @@ def admin_main() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin:tasks")],
             [InlineKeyboardButton(text="✅ Допуск к заданиям", callback_data="admin:admission_queue")],
+            [InlineKeyboardButton(text="📝 Подтверждение отзывов", callback_data="admin:reviews_queue")],
             [InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats")],
             [InlineKeyboardButton(text="📢 Массовая рассылка", callback_data="admin:broadcast")],
             [InlineKeyboardButton(text="👤 Управление пользователями", callback_data="admin:users")],

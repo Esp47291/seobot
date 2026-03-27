@@ -33,69 +33,69 @@ router = Router(name="admin")
 
 @router.callback_query(F.data == "admin:admission_queue")
 async def admission_queue(cb: CallbackQuery, **data):
-    """
-    One-click queue:
-    - waiting_approval: допуск к заданиям (этап до "approved")
-    - review_submitted: подтверждение отзывов (этап до "completed")
-    """
     await cb.answer()
     session = data["session"]
-    attempt_repo = AttemptRepository(session)
     task_repo = TaskItemRepository(session)
 
-    # waiting for "Допустить/Отказать"
     waiting = await session.execute(
         select(Attempt).where(Attempt.status == "waiting_approval").order_by(Attempt.id.desc())
     )
     waiting_attempts = list(waiting.scalars().all())
 
-    # waiting for "Отзыв принят/Отзыв отклонен"
+    if not waiting_attempts:
+        await cb.message.answer("Нет активных заявок на допуск к заданиям.")
+        return
+
+    await cb.message.answer(f"🟡 Заявки на допуск к заданиям: {len(waiting_attempts)}")
+    for at in waiting_attempts:
+        task = await task_repo.get_by_id(at.task_item_id)
+        platform = getattr(task, "platform", None) if task else None
+        venue_city = getattr(task, "venue_city", None) if task else None
+        sphere = getattr(task, "sphere", None) if task else None
+        try:
+            price = float(getattr(task, "price", 0) or 0)
+        except Exception:
+            price = 0.0
+        await cb.message.answer(
+            f"🧾 Заявка #{at.id}\n"
+            f"Исполнитель ID: {at.user_id}\n"
+            f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
+            f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
+            reply_markup=moderation_kb(at.id, "pre"),
+        )
+
+
+@router.callback_query(F.data == "admin:reviews_queue")
+async def reviews_queue(cb: CallbackQuery, **data):
+    await cb.answer()
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+
     review = await session.execute(
         select(Attempt).where(Attempt.status == "review_submitted").order_by(Attempt.id.desc())
     )
     review_attempts = list(review.scalars().all())
-
-    if not waiting_attempts and not review_attempts:
-        await cb.message.answer("Нет активных заявок на допуск и подтверждение отзывов.")
+    if not review_attempts:
+        await cb.message.answer("Нет отзывов на подтверждении.")
         return
 
-    if waiting_attempts:
-        await cb.message.answer(f"🟡 Заявки на допуск к заданиям: {len(waiting_attempts)}")
-        for at in waiting_attempts:
-            task = await task_repo.get_by_id(at.task_item_id)
-            platform = getattr(task, "platform", None) if task else None
-            venue_city = getattr(task, "venue_city", None) if task else None
-            sphere = getattr(task, "sphere", None) if task else None
-            try:
-                price = float(getattr(task, "price", 0) or 0)
-            except Exception:
-                price = 0.0
-            await cb.message.answer(
-                f"🧾 Заявка #{at.id}\n"
-                f"Исполнитель ID: {at.user_id}\n"
-                f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
-                f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
-                reply_markup=moderation_kb(at.id, "pre"),
-            )
-
-    if review_attempts:
-        await cb.message.answer(f"🟢 Подтверждение отзывов: {len(review_attempts)}")
-        for at in review_attempts:
-            task = await task_repo.get_by_id(at.task_item_id)
-            platform = getattr(task, "platform", None) if task else None
-            venue_city = getattr(task, "venue_city", None) if task else None
-            sphere = getattr(task, "sphere", None) if task else None
-            try:
-                price = float(getattr(task, "price", 0) or 0)
-            except Exception:
-                price = 0.0
-            await cb.message.answer(
-                f"🧾 Отзыв на подтверждении #{at.id}\n"
-                f"Исполнитель ID: {at.user_id}\n"
-                f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
-                f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
-                reply_markup=moderation_kb(at.id, "review"),
-            )
+    await cb.message.answer(f"🟢 Подтверждение отзывов: {len(review_attempts)}")
+    for at in review_attempts:
+        task = await task_repo.get_by_id(at.task_item_id)
+        platform = getattr(task, "platform", None) if task else None
+        venue_city = getattr(task, "venue_city", None) if task else None
+        sphere = getattr(task, "sphere", None) if task else None
+        try:
+            price = float(getattr(task, "price", 0) or 0)
+        except Exception:
+            price = 0.0
+        await cb.message.answer(
+            f"🧾 Отзыв на подтверждении #{at.id}\n"
+            f"Исполнитель ID: {at.user_id}\n"
+            f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
+            f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
+            reply_markup=moderation_kb(at.id, "review"),
+        )
 
 
 def _telegram_text_chunks(text: str, max_len: int = 3800) -> list[str]:
