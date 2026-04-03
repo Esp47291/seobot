@@ -445,6 +445,47 @@ async def mgr_tasks_delete_action(cb: CallbackQuery, state: FSMContext, **data):
 # --- Статистика ---
 
 
+@router.callback_query(F.data == "mgr:tasks_analytics")
+async def mgr_tasks_analytics(cb: CallbackQuery, **data):
+    await cb.answer()
+    session = data["session"]
+    rows = await StatsRepository(session).tasks_analytics_rows(
+        owner_filter="manager",
+        manager_user_id=cb.from_user.id,
+        limit=40,
+    )
+    lines = ["📈 <b>Ваши задания</b>", ""]
+    if not rows:
+        lines.append("У вас пока нет заданий.")
+    else:
+        for item in rows:
+            t = item["task"]
+            lines.append(
+                f"#{t.id} {t.platform} | {item['venue_city_short']} | {item['sphere_short']}\n"
+                f"   активно: {'да' if t.is_active else 'нет'}\n"
+                f"   попыток: {item['attempts_total']} | completed: {item['completed_n']} | "
+                f"ждут вашей оплаты: {item['awaiting_manager_pay']} | вы отметили оплату: {item['paid_by_manager']}\n"
+            )
+    text = "\n".join(lines)
+    max_len = 3800
+    if len(text) <= max_len:
+        await cb.message.answer(text, parse_mode="HTML")
+        return
+    chunk: list[str] = []
+    cur = 0
+    for line in text.split("\n"):
+        add = len(line) + (1 if chunk else 0)
+        if cur + add > max_len and chunk:
+            await cb.message.answer("\n".join(chunk), parse_mode="HTML")
+            chunk = [line]
+            cur = len(line)
+        else:
+            chunk.append(line)
+            cur += add
+    if chunk:
+        await cb.message.answer("\n".join(chunk), parse_mode="HTML")
+
+
 @router.callback_query(F.data == "mgr:stats")
 async def mgr_stats(cb: CallbackQuery, **data):
     await cb.answer()

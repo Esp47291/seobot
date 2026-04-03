@@ -23,6 +23,7 @@ from middlewares import (
     RulesAcceptanceMiddleware,
 )
 from handlers import admin_router, manager_router, staff_settings_router, user_router
+from services.bot_runtime import mark_started
 from services.review_scheduler import start_scheduler
 
 logging.basicConfig(
@@ -112,6 +113,7 @@ async def main() -> None:
     scheduler = start_scheduler(bot)
 
     try:
+        mark_started()
         logger.info("Бот запущен")
         await dp.start_polling(bot)
     finally:

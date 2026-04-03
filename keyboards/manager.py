@@ -7,6 +7,7 @@ def manager_main() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Мои задания", callback_data="mgr:tasks")],
+            [InlineKeyboardButton(text="📈 Аналитика по заданиям", callback_data="mgr:tasks_analytics")],
             [InlineKeyboardButton(text="📊 Статистика", callback_data="mgr:stats")],
             [InlineKeyboardButton(text="✉️ Личная рассылка", callback_data="mgr:broadcast")],
             [InlineKeyboardButton(text="💸 Заявки на вывод", callback_data="mgr:withdrawals")],

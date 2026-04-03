@@ -48,3 +48,5 @@ class AdminFSM(StatesGroup):
     waiting_user_query = State()
     waiting_balance_change = State()  # ввод команды /balance +100 <id|@username>
     waiting_settings_value = State()
+    waiting_export_date_from = State()
+    waiting_export_date_to = State()

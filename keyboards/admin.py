@@ -7,7 +7,9 @@ def admin_main() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📋 Управление заданиями", callback_data="admin:tasks")],
+            [InlineKeyboardButton(text="📊 Аналитика и инструменты", callback_data="admin:analytics_hub")],
             [InlineKeyboardButton(text="✅ Допуск к заданиям", callback_data="admin:admission_queue")],
+            [InlineKeyboardButton(text="📝 Подтверждение отзывов", callback_data="admin:reviews_queue")],
             [InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats")],
             [InlineKeyboardButton(text="📢 Массовая рассылка", callback_data="admin:broadcast")],
             [InlineKeyboardButton(text="👤 Управление пользователями", callback_data="admin:users")],
@@ -67,5 +69,63 @@ def users_manage_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="💰 Добавить баланс", callback_data="admin:user_balance_add")],
             [InlineKeyboardButton(text="💸 Уменьшить баланс", callback_data="admin:user_balance_sub")],
             [InlineKeyboardButton(text="◀ Назад", callback_data="admin:back_main")],
+        ]
+    )
+
+
+def admin_analytics_hub_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📌 Центр модерации", callback_data="admin:moderation_hub")],
+            [InlineKeyboardButton(text="📤 Экспорт в CSV", callback_data="admin:export_menu")],
+            [InlineKeyboardButton(text="📈 Задания: сводка", callback_data="admin:tasks_analytics_menu")],
+            [InlineKeyboardButton(text="👔 Менеджеры: действия", callback_data="admin:manager_bulk_menu")],
+            [InlineKeyboardButton(text="🤖 Статус бота", callback_data="admin:bot_status")],
+            [InlineKeyboardButton(text="💾 Бэкап SQLite", callback_data="admin:db_backup")],
+            [InlineKeyboardButton(text="◀ Назад", callback_data="admin:back_main")],
+        ]
+    )
+
+
+def admin_moderation_hub_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Обновить счётчики", callback_data="admin:moderation_hub_refresh")],
+            [
+                InlineKeyboardButton(text="✅ Допуск", callback_data="admin:admission_queue"),
+                InlineKeyboardButton(text="📝 Отзывы", callback_data="admin:reviews_queue"),
+            ],
+            [
+                InlineKeyboardButton(text="👤 2-й аккаунт", callback_data="admin:secacc_queue"),
+                InlineKeyboardButton(text="💸 Выводы", callback_data="admin:withdrawals"),
+            ],
+            [InlineKeyboardButton(text="◀ К аналитике", callback_data="admin:analytics_hub")],
+        ]
+    )
+
+
+def admin_export_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Попытки completed: 7 дн.", callback_data="admin:export:attempts:7")],
+            [InlineKeyboardButton(text="Попытки completed: 30 дн.", callback_data="admin:export:attempts:30")],
+            [InlineKeyboardButton(text="Попытки completed: 90 дн.", callback_data="admin:export:attempts:90")],
+            [InlineKeyboardButton(text="Попытки: свои даты", callback_data="admin:export:attempts:custom")],
+            [InlineKeyboardButton(text="Заявки на вывод: 7 дн.", callback_data="admin:export:wd:7")],
+            [InlineKeyboardButton(text="Заявки на вывод: 30 дн.", callback_data="admin:export:wd:30")],
+            [InlineKeyboardButton(text="Заявки на вывод: 90 дн.", callback_data="admin:export:wd:90")],
+            [InlineKeyboardButton(text="Выводы: свои даты", callback_data="admin:export:wd:custom")],
+            [InlineKeyboardButton(text="◀ К аналитике", callback_data="admin:analytics_hub")],
+        ]
+    )
+
+
+def admin_tasks_analytics_root_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Все задания", callback_data="admin:tan:all")],
+            [InlineKeyboardButton(text="Только админ", callback_data="admin:tan:admin")],
+            [InlineKeyboardButton(text="Выбрать менеджера…", callback_data="admin:tan:pick_mgr")],
+            [InlineKeyboardButton(text="◀ К аналитике", callback_data="admin:analytics_hub")],
         ]
     )

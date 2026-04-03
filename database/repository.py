@@ -4,8 +4,9 @@ import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from config import DEFAULT_MIN_WITHDRAW, MANAGER_IDS, REVIEW_REMINDER_AFTER_MINUTES
 from .models import (
@@ -342,6 +343,20 @@ class TaskItemRepository:
         )
         return list(result.scalars().all())
 
+    async def deactivate_all_for_manager(self, manager_user_id: int) -> int:
+        """Выключает все активные задания менеджера. Возвращает число изменённых строк."""
+        result = await self.session.execute(
+            select(TaskItem).where(
+                TaskItem.created_by_user_id == manager_user_id,
+                TaskItem.is_active == True,
+            )
+        )
+        rows = list(result.scalars().all())
+        for t in rows:
+            t.is_active = False
+        await self.session.flush()
+        return len(rows)
+
 
 class AttemptRepository:
     def __init__(self, session: AsyncSession):
@@ -525,6 +540,15 @@ class SecondAccountReviewRepository:
         row.decline_reason = reason
         await self.session.flush()
         return row
+
+    async def list_pending(self, limit: int = 100) -> list[SecondAccountReview]:
+        result = await self.session.execute(
+            select(SecondAccountReview)
+            .where(SecondAccountReview.status == "pending")
+            .order_by(SecondAccountReview.id.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
 
 class BalanceRepository:
@@ -878,6 +902,224 @@ class StatsRepository:
             "sum_awaiting_manager_rub": sum_pending,
             "attempts_in_progress": in_progress,
         }
+
+    async def moderation_hub_counts(self) -> dict[str, int]:
+        admission = int(
+            (
+                await self.session.execute(
+                    select(func.count()).select_from(Attempt).where(Attempt.status == "waiting_approval")
+                )
+            ).scalar()
+            or 0
+        )
+        reviews = int(
+            (
+                await self.session.execute(
+                    select(func.count()).select_from(Attempt).where(Attempt.status == "review_submitted")
+                )
+            ).scalar()
+            or 0
+        )
+        secacc = int(
+            (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(SecondAccountReview)
+                    .where(SecondAccountReview.status == "pending")
+                )
+            ).scalar()
+            or 0
+        )
+        withdrawals = int(
+            (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(WithdrawalRequest)
+                    .where(WithdrawalRequest.status == "pending")
+                )
+            ).scalar()
+            or 0
+        )
+        return {
+            "admission": admission,
+            "reviews": reviews,
+            "second_account": secacc,
+            "withdrawals": withdrawals,
+        }
+
+    async def export_completed_attempts_rows(self, dt_from: datetime, dt_to: datetime) -> list[dict]:
+        OwnerUser = aliased(User, name="task_owner_user")
+        result = await self.session.execute(
+            select(Attempt, TaskItem, User, OwnerUser)
+            .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+            .join(User, Attempt.user_id == User.user_id)
+            .outerjoin(OwnerUser, TaskItem.created_by_user_id == OwnerUser.user_id)
+            .where(
+                Attempt.status == "completed",
+                Attempt.updated_at >= dt_from,
+                Attempt.updated_at <= dt_to,
+            )
+            .order_by(Attempt.id.asc())
+        )
+        out: list[dict] = []
+        for attempt, task, executor, owner in result.all():
+            if task.created_by_user_id is None:
+                owner_type = "admin"
+                owner_tid = ""
+                owner_un = ""
+            else:
+                owner_type = "manager"
+                owner_tid = str(task.created_by_user_id)
+                owner_un = (owner.username or "") if owner is not None else ""
+            req = (attempt.payout_requisites or "").replace("\n", " ").replace("\r", " ").strip()
+            out.append(
+                {
+                    "attempt_id": attempt.id,
+                    "task_id": task.id,
+                    "instruction_url": (task.instruction_url or "").strip(),
+                    "owner_type": owner_type,
+                    "owner_telegram_id": owner_tid,
+                    "owner_username": owner_un,
+                    "platform": task.platform or "",
+                    "venue_city": (getattr(task, "venue_city", None) or "").strip(),
+                    "executor_telegram_id": str(attempt.user_id),
+                    "executor_username": executor.username or "",
+                    "task_price_rub": float(task.price or 0),
+                    "balance_credited": "yes" if attempt.balance_credited else "no",
+                    "payout_requisites": req,
+                    "completed_at_utc": attempt.updated_at.isoformat() if attempt.updated_at else "",
+                }
+            )
+        return out
+
+    async def export_withdrawal_rows(self, dt_from: datetime, dt_to: datetime) -> list[dict]:
+        result = await self.session.execute(
+            select(WithdrawalRequest, User)
+            .outerjoin(User, WithdrawalRequest.user_id == User.user_id)
+            .where(WithdrawalRequest.created_at >= dt_from, WithdrawalRequest.created_at <= dt_to)
+            .order_by(WithdrawalRequest.id.asc())
+        )
+        out: list[dict] = []
+        for wd, u in result.all():
+            req = (wd.requisites or "").replace("\n", " ").replace("\r", " ").strip()
+            out.append(
+                {
+                    "withdrawal_id": wd.id,
+                    "user_telegram_id": str(wd.user_id),
+                    "username": (u.username or "") if u is not None else "",
+                    "amount_rub": float(wd.amount or 0),
+                    "status": wd.status or "",
+                    "requisites": req,
+                    "created_at_utc": wd.created_at.isoformat() if wd.created_at else "",
+                    "processed_at_utc": wd.processed_at.isoformat() if wd.processed_at else "",
+                }
+            )
+        return out
+
+    async def managers_pending_payment_summary(self) -> list[tuple[int, int, float]]:
+        """(manager_user_id, completed_awaiting_pay_count, sum_prices_rub)."""
+        result = await self.session.execute(
+            select(
+                TaskItem.created_by_user_id,
+                func.count(Attempt.id),
+                func.coalesce(func.sum(TaskItem.price), 0),
+            )
+            .select_from(Attempt)
+            .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+            .where(
+                Attempt.status == "completed",
+                Attempt.balance_credited.is_(False),
+                TaskItem.created_by_user_id.isnot(None),
+            )
+            .group_by(TaskItem.created_by_user_id)
+        )
+        rows: list[tuple[int, int, float]] = []
+        for uid, cnt, s in result.all():
+            if uid is None:
+                continue
+            rows.append((int(uid), int(cnt or 0), float(s or 0)))
+        return rows
+
+    async def tasks_analytics_rows(
+        self,
+        *,
+        owner_filter: str | None = None,
+        manager_user_id: int | None = None,
+        limit: int = 35,
+    ) -> list[dict]:
+        """
+        owner_filter: None — все; \"admin\" — задания админа; \"manager\" — задания одного менеджера (нужен manager_user_id).
+        """
+        agg_sq = (
+            select(
+                Attempt.task_item_id.label("tid"),
+                func.count(Attempt.id).label("attempts_total"),
+                func.sum(case((Attempt.status == "completed", 1), else_=0)).label("completed_n"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                Attempt.status == "completed",
+                                Attempt.balance_credited.is_(False),
+                                TaskItem.created_by_user_id.isnot(None),
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("awaiting_pay_n"),
+                func.sum(
+                    case(
+                        (
+                            and_(Attempt.status == "completed", Attempt.balance_credited.is_(True)),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("paid_out_n"),
+            )
+            .select_from(Attempt)
+            .join(TaskItem, Attempt.task_item_id == TaskItem.id)
+            .group_by(Attempt.task_item_id)
+        ).subquery()
+
+        q = (
+            select(
+                TaskItem,
+                func.coalesce(agg_sq.c.attempts_total, 0).label("atn"),
+                func.coalesce(agg_sq.c.completed_n, 0).label("done_n"),
+                func.coalesce(agg_sq.c.awaiting_pay_n, 0).label("wait_n"),
+                func.coalesce(agg_sq.c.paid_out_n, 0).label("paid_n"),
+            )
+            .select_from(TaskItem)
+            .outerjoin(agg_sq, TaskItem.id == agg_sq.c.tid)
+        )
+        if owner_filter == "admin":
+            q = q.where(TaskItem.created_by_user_id.is_(None))
+        elif owner_filter == "manager" and manager_user_id is not None:
+            q = q.where(TaskItem.created_by_user_id == manager_user_id)
+
+        q = q.order_by(TaskItem.id.desc()).limit(limit)
+        result = await self.session.execute(q)
+        out: list[dict] = []
+        for task, atn, done_n, wait_n, paid_n in result.all():
+            owner = "админ" if task.created_by_user_id is None else f"менеджер {task.created_by_user_id}"
+            vc = (getattr(task, "venue_city", None) or "").strip() or "—"
+            sp = (task.sphere or "").strip() or "—"
+            sp_short = sp[:22] + "…" if len(sp) > 22 else sp
+            out.append(
+                {
+                    "task": task,
+                    "attempts_total": int(atn or 0),
+                    "completed_n": int(done_n or 0),
+                    "awaiting_manager_pay": int(wait_n or 0),
+                    "paid_by_manager": int(paid_n or 0),
+                    "owner_label": owner,
+                    "venue_city_short": vc,
+                    "sphere_short": sp_short,
+                }
+            )
+        return out
 
 
 class ReferralRepository:
