@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Админ-хендлеры для SeoJob / Отзовик."""
 import json
+import re
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -29,6 +30,17 @@ from services.task_payout import grant_task_completion_rewards
 from utils.fsm import AdminFSM
 
 router = Router(name="admin")
+
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def _extract_first_url(text: str | None) -> str | None:
+    if not text:
+        return None
+    m = _URL_RE.search(text)
+    if not m:
+        return None
+    return m.group(0).rstrip(").,]>\"'")
 
 
 @router.callback_query(F.data == "admin:admission_queue")
@@ -89,13 +101,25 @@ async def reviews_queue(cb: CallbackQuery, **data):
             price = float(getattr(task, "price", 0) or 0)
         except Exception:
             price = 0.0
-        await cb.message.answer(
+        venue_url = _extract_first_url(getattr(task, "instruction_url", None) if task else None)
+        text = (
             f"🧾 Отзыв на подтверждении #{at.id}\n"
             f"Исполнитель ID: {at.user_id}\n"
             f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
-            f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
-            reply_markup=moderation_kb(at.id, "review"),
+            f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб."
         )
+        if venue_url:
+            text += f"\n🔗 Ссылка: {venue_url}"
+
+        review_file_id = (getattr(at, "review_screenshot_file_id", None) or "").strip()
+        if review_file_id:
+            await cb.message.answer_photo(
+                photo=review_file_id,
+                caption=text,
+                reply_markup=moderation_kb(at.id, "review"),
+            )
+        else:
+            await cb.message.answer(text, reply_markup=moderation_kb(at.id, "review"))
 
 
 def _telegram_text_chunks(text: str, max_len: int = 3800) -> list[str]:
