@@ -68,7 +68,9 @@ async def admission_queue(cb: CallbackQuery, **data):
     task_repo = TaskItemRepository(session)
 
     waiting = await session.execute(
-        select(Attempt).where(Attempt.status == "waiting_approval").order_by(Attempt.id.desc())
+        select(Attempt)
+        .where(Attempt.status.in_(["waiting_approval", "login_screenshot"]))
+        .order_by(Attempt.id.desc())
     )
     waiting_attempts = list(waiting.scalars().all())
 
