@@ -110,6 +110,7 @@ async def reviews_queue(cb: CallbackQuery, **data):
     await cb.answer()
     session = data["session"]
     task_repo = TaskItemRepository(session)
+    user_repo = UserRepository(session)
 
     review = await session.execute(
         select(Attempt).where(Attempt.status == "review_submitted").order_by(Attempt.id.desc())
@@ -121,6 +122,8 @@ async def reviews_queue(cb: CallbackQuery, **data):
 
     await cb.message.answer(f"🟢 Подтверждение отзывов: {len(review_attempts)}")
     for at in review_attempts:
+        u = await user_repo.get_by_user_id(at.user_id)
+        uname = f"@{u.username}" if u and u.username else "—"
         task = await task_repo.get_by_id(at.task_item_id)
         platform = getattr(task, "platform", None) if task else None
         venue_city = getattr(task, "venue_city", None) if task else None
@@ -130,9 +133,15 @@ async def reviews_queue(cb: CallbackQuery, **data):
         except Exception:
             price = 0.0
         venue_url = _extract_first_url(getattr(task, "instruction_url", None) if task else None)
+        submitted_line = "—"
+        if getattr(at, "submitted_at", None):
+            # submitted_at фиксируется в момент отправки скрина отзыва на проверку
+            submitted_line = at.submitted_at.strftime("%d.%m.%Y %H:%M") + " UTC"
         text = (
             f"🧾 Отзыв на подтверждении #{at.id}\n"
+            f"Исполнитель: {uname}\n"
             f"Исполнитель ID: {at.user_id}\n"
+            f"Дата отправки скрина: {submitted_line}\n"
             f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
             f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб."
         )
