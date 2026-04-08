@@ -48,11 +48,184 @@ async def mgr_tasks_menu(cb: CallbackQuery):
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="➕ Добавить задание", callback_data="mgr:tasks_add")],
+                [InlineKeyboardButton(text="✏️ Изменить объявление", callback_data="mgr:tasks_edit")],
                 [InlineKeyboardButton(text="🗑️ Удалить задание", callback_data="mgr:tasks_delete")],
                 [InlineKeyboardButton(text="◀ Назад", callback_data="mgr:back_main")],
             ]
         ),
     )
+
+
+@router.callback_query(F.data == "mgr:tasks_edit")
+async def mgr_tasks_edit_menu(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    await state.clear()
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+    items = await task_repo.get_by_creator(cb.from_user.id)
+    items_sorted = sorted(items, key=lambda x: x.id)
+
+    if not items_sorted:
+        await cb.message.answer("У вас пока нет заданий.", reply_markup=manager_main())
+        return
+
+    lines = []
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for idx, item in enumerate(items_sorted, start=1):
+        label = f"{idx}"
+        vc = (getattr(item, "venue_city", None) or "").strip() or "—"
+        sp = (item.sphere or "").strip() or "—"
+        sp_short = sp[:24] + "…" if len(sp) > 24 else sp
+        lines.append(
+            f"{idx}) ID {item.id} | {item.platform} | город: {vc} | {sp_short} | "
+            f"{float(item.price):.2f} руб. | {'ON' if item.is_active else 'OFF'}"
+        )
+        kb.inline_keyboard.append([InlineKeyboardButton(text=label, callback_data=f"mgr:tasks_edit_pick:{item.id}")])
+    kb.inline_keyboard.append([InlineKeyboardButton(text="◀ Назад", callback_data="mgr:tasks")])
+
+    await cb.message.answer("Выберите задание для изменения:\n\n" + "\n".join(lines), reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("mgr:tasks_edit_pick:"))
+async def mgr_tasks_edit_pick(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    await state.clear()
+    task_id = int(cb.data.split(":")[2])
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+    task = await task_repo.get_by_id(task_id)
+    if not task or task.created_by_user_id != cb.from_user.id:
+        await cb.message.answer("Задание не найдено или это не ваше задание.", reply_markup=manager_main())
+        return
+
+    await state.update_data(edit_task_id=task_id)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Цена", callback_data=f"mgr:tasks_edit_field:{task_id}:price")],
+            [InlineKeyboardButton(text="🏙️ Город организации", callback_data=f"mgr:tasks_edit_field:{task_id}:venue_city")],
+            [InlineKeyboardButton(text="🏷️ Сфера", callback_data=f"mgr:tasks_edit_field:{task_id}:sphere")],
+            [InlineKeyboardButton(text="📝 Инструкция/ссылка (полностью)", callback_data=f"mgr:tasks_edit_field:{task_id}:instruction_url")],
+            [InlineKeyboardButton(text="📆 Лимит в день", callback_data=f"mgr:tasks_edit_field:{task_id}:daily_issue_count")],
+            [InlineKeyboardButton(text="🔁 Вкл/выкл", callback_data=f"mgr:tasks_edit_field:{task_id}:toggle_active")],
+            [InlineKeyboardButton(text="◀ Назад", callback_data="mgr:tasks_edit")],
+        ]
+    )
+    await cb.message.answer(
+        f"✏️ Редактирование задания #{task.id}\n"
+        f"{task.platform} | {(getattr(task, 'venue_city', '') or '—').strip()} | {(task.sphere or '—').strip()} | {float(task.price):.2f} руб.",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.startswith("mgr:tasks_edit_field:"))
+async def mgr_tasks_edit_field(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    parts = cb.data.split(":")
+    task_id = int(parts[2])
+    field = parts[3]
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+    task = await task_repo.get_by_id(task_id)
+    if not task or task.created_by_user_id != cb.from_user.id:
+        await state.clear()
+        await cb.message.answer("Задание не найдено или это не ваше задание.", reply_markup=manager_main())
+        return
+
+    if field == "toggle_active":
+        await task_repo.toggle_active(task_id)
+        await state.clear()
+        await cb.message.answer("✅ Готово: статус задания переключён.", reply_markup=manager_main())
+        return
+
+    await state.set_state(ManagerFSM.waiting_task_edit_value)
+    await state.update_data(edit_task_id=task_id, edit_field=field)
+
+    prompt = "Введите новое значение."
+    if field == "price":
+        prompt = "Введите новую цену (число), например 130"
+    elif field == "venue_city":
+        prompt = "Введите новый город организации, например: Москва"
+    elif field == "sphere":
+        prompt = "Введите новую сферу, например: Стоматология"
+    elif field == "instruction_url":
+        prompt = "Введите новый текст инструкции (можно со ссылкой). Это полностью заменит текущую инструкцию."
+    elif field == "daily_issue_count":
+        prompt = "Введите лимит выдачи в день (1..10)."
+
+    await cb.message.answer(prompt, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀ Назад", callback_data="mgr:back_main")]]))
+
+
+@router.message(ManagerFSM.waiting_task_edit_value, F.text)
+async def mgr_tasks_edit_value_save(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+    settings = await SettingsRepository(session).get()
+
+    d = await state.get_data()
+    task_id = int(d.get("edit_task_id") or 0)
+    field = (d.get("edit_field") or "").strip()
+    task = await task_repo.get_by_id(task_id)
+    if not task or task.created_by_user_id != message.from_user.id:
+        await state.clear()
+        await message.answer("Задание не найдено или это не ваше задание.", reply_markup=manager_main())
+        return
+
+    raw = (message.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=manager_main())
+        return
+
+    value = raw
+    if field == "price":
+        try:
+            new_price = Decimal(raw.replace(",", "."))
+        except Exception:
+            await message.answer("Некорректное число. Повторите, например 130.")
+            return
+        if new_price <= 0:
+            await message.answer("Цена должна быть больше 0.")
+            return
+        min_price = None
+        if task.platform == "Яндекс карты":
+            min_price = settings.min_review_price_yandex
+        elif task.platform == "Google карты":
+            min_price = settings.min_review_price_google
+        elif task.platform == "2ГИС":
+            min_price = settings.min_review_price_2gis
+        if min_price is not None and float(new_price) < float(min_price):
+            await message.answer(f"Минимальная цена для {task.platform} = {min_price} руб. Ниже нельзя.")
+            return
+        value = str(new_price)
+    elif field == "venue_city":
+        if len(raw) < 2:
+            await message.answer("Город слишком короткий.")
+            return
+    elif field == "sphere":
+        if len(raw) < 2:
+            await message.answer("Сфера слишком короткая.")
+            return
+    elif field == "daily_issue_count":
+        try:
+            n = int(raw)
+        except Exception:
+            await message.answer("Введите целое число 1..10.")
+            return
+        if n < 1 or n > 10:
+            await message.answer("Число должно быть в диапазоне 1..10.")
+            return
+        value = str(n)
+
+    ok = await task_repo.update_field(task_id, field, value)
+    if not ok:
+        await message.answer("Не удалось сохранить (проверьте значение).", reply_markup=manager_main())
+        await state.clear()
+        return
+
+    await state.clear()
+    await message.answer("✅ Изменение сохранено.", reply_markup=manager_main())
 
 
 @router.callback_query(F.data == "mgr:tasks_add")

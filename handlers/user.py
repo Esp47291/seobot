@@ -602,18 +602,15 @@ async def got_account_screenshot(message: Message, state: FSMContext, **data):
     task = await task_repo.get_by_id(attempt.task_item_id)
     city_org, sphere_org = _task_card_venue_sphere(task)
     admin_text = (
-        f"🆕 Запрос на задание от @{message.from_user.username or message.from_user.id}\n"
-        f"Задание: {task.platform} | город орг.: {city_org} | сфера: {sphere_org}\n"
-        f"Цена: {float(task.price):.2f} руб."
+        "🆕 <b>Новая заявка на допуск</b>\n"
+        f"Заявка (attempt) #{attempt.id}\n"
+        f"Исполнитель ID: <code>{attempt.user_id}</code>\n"
+        f"Задание: {task.platform} | город орг.: {city_org} | сфера: {sphere_org} | {float(task.price):.2f} руб.\n\n"
+        "Откройте: /admin → «✅ Допуск к заданиям» (там будет скрин и кнопки)."
     )
     for admin_id in ADMIN_IDS:
         try:
-            await message.bot.send_photo(
-                admin_id,
-                file_id,
-                caption=admin_text,
-                reply_markup=moderation_kb(attempt.id, "pre"),
-            )
+            await message.bot.send_message(admin_id, admin_text, parse_mode="HTML")
         except Exception:
             pass
     await message.answer("Скриншот отправлен на модерацию. Ожидайте решение.")

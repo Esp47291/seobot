@@ -2,6 +2,7 @@
 """Админ-хендлеры для SeoJob / Отзовик."""
 import json
 import re
+from datetime import datetime
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -9,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 
 from config import ADMIN_IDS
 from database.models import Attempt, User
@@ -23,7 +24,7 @@ from database import (
     UserRepository,
     WithdrawalRepository,
 )
-from keyboards.admin import admin_main, moderation_kb, users_manage_kb, withdraw_kb
+from keyboards.admin import admin_back_main_kb, admin_main, moderation_kb, users_manage_kb, withdraw_kb
 from keyboards.manager import manager_payout_kb
 from keyboards.user import cancel_attempt_kb, main_menu
 from services.task_payout import grant_task_completion_rewards
@@ -41,6 +42,23 @@ def _extract_first_url(text: str | None) -> str | None:
     if not m:
         return None
     return m.group(0).rstrip(").,]>\"'")
+
+
+def _human_timedelta(dt: datetime) -> str:
+    delta = datetime.utcnow() - dt
+    sec = int(delta.total_seconds())
+    if sec < 0:
+        sec = 0
+    days = sec // 86400
+    hours = (sec % 86400) // 3600
+    minutes = (sec % 3600) // 60
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}д")
+    if hours or days:
+        parts.append(f"{hours}ч")
+    parts.append(f"{minutes}м")
+    return " ".join(parts)
 
 
 @router.callback_query(F.data == "admin:admission_queue")
@@ -68,13 +86,21 @@ async def admission_queue(cb: CallbackQuery, **data):
             price = float(getattr(task, "price", 0) or 0)
         except Exception:
             price = 0.0
-        await cb.message.answer(
+        text = (
             f"🧾 Заявка #{at.id}\n"
             f"Исполнитель ID: {at.user_id}\n"
             f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
-            f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
-            reply_markup=moderation_kb(at.id, "pre"),
+            f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб."
         )
+        file_id = (getattr(at, "account_screenshot_file_id", None) or "").strip()
+        if file_id:
+            await cb.message.answer_photo(
+                photo=file_id,
+                caption=text,
+                reply_markup=moderation_kb(at.id, "pre"),
+            )
+        else:
+            await cb.message.answer(text, reply_markup=moderation_kb(at.id, "pre"))
 
 
 @router.callback_query(F.data == "admin:reviews_queue")
@@ -148,6 +174,116 @@ async def cmd_admin(message: Message):
     await message.answer("Админ-панель:", reply_markup=admin_main())
 
 
+@router.callback_query(F.data == "admin:user_profile")
+async def admin_user_profile_start(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await state.clear()
+    await state.set_state(AdminFSM.waiting_user_profile_query)
+    await cb.message.answer(
+        "Введите Telegram ID пользователя или @username.\n\nПримеры:\n`5263412842`\n`@someuser`",
+        reply_markup=admin_back_main_kb(),
+    )
+
+
+@router.message(AdminFSM.waiting_user_profile_query, F.text)
+async def admin_user_profile_show(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    user_repo = UserRepository(session)
+
+    raw = (message.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+
+    token = raw.split()[0].strip()
+    user: User | None = None
+    if token.startswith("@") or not token.isdigit():
+        user = await user_repo.get_by_username(token)
+    else:
+        user = await user_repo.get_by_user_id(int(token))
+
+    if not user:
+        await message.answer("Пользователь не найден. Проверьте ID/username.", reply_markup=admin_back_main_kb())
+        return
+
+    # агрегаты по попыткам
+    by_status_rows = (
+        await session.execute(
+            select(Attempt.status, func.count())
+            .where(Attempt.user_id == user.user_id)
+            .group_by(Attempt.status)
+        )
+    ).all()
+    status_map: dict[str, int] = {str(s): int(c or 0) for s, c in by_status_rows}
+    total_attempts = sum(status_map.values())
+
+    last_submitted_at = (
+        await session.execute(
+            select(func.max(Attempt.submitted_at)).where(
+                Attempt.user_id == user.user_id,
+                Attempt.submitted_at.is_not(None),
+            )
+        )
+    ).scalar_one_or_none()
+
+    last_review_line = "—"
+    if last_submitted_at:
+        last_review_line = _human_timedelta(last_submitted_at)
+
+    # последние 5 попыток
+    last_rows = (
+        await session.execute(
+            select(Attempt)
+            .where(Attempt.user_id == user.user_id)
+            .order_by(Attempt.id.desc())
+            .limit(5)
+        )
+    ).scalars().all()
+
+    task_repo = TaskItemRepository(session)
+    attempt_lines: list[str] = []
+    for at in last_rows:
+        task = await task_repo.get_by_id(at.task_item_id)
+        platform = getattr(task, "platform", None) if task else None
+        venue_city = getattr(task, "venue_city", None) if task else None
+        sphere = getattr(task, "sphere", None) if task else None
+        price = float(getattr(task, "price", 0) or 0) if task else 0.0
+        created = at.created_at.strftime("%d.%m.%Y %H:%M") if at.created_at else "—"
+        attempt_lines.append(
+            f"• #{at.id} [{at.status}] {created} | {platform or '—'} | {(venue_city or '—').strip()} | {sphere or '—'} | {price:.2f} руб."
+        )
+
+    uname = f"@{user.username}" if user.username else "—"
+    name = (user.first_name or "").strip() or "—"
+    city = (user.city or "").strip() or "—"
+    req = (user.payout_requisites or "").strip() or "—"
+    blocked = "да" if user.is_blocked else "нет"
+
+    stats_lines = [
+        "👤 <b>ЛК пользователя</b>",
+        f"ID: <code>{user.user_id}</code>",
+        f"Username: {uname}",
+        f"Имя: {name}",
+        f"Город: {city}",
+        f"Баланс: <b>{float(user.balance or 0):.2f}</b> руб.",
+        f"Заблокирован: <b>{blocked}</b>",
+        f"Реквизиты: {req[:700]}",
+        "",
+        "📊 <b>Статистика</b>",
+        f"Всего попыток: <b>{total_attempts}</b>",
+        f"Completed: {status_map.get('completed', 0)} | Review_submitted: {status_map.get('review_submitted', 0)} | Rejected: {status_map.get('rejected', 0)}",
+        f"Declined: {status_map.get('declined', 0)} | Canceled: {status_map.get('canceled', 0)} | Approved: {status_map.get('approved', 0)}",
+        f"⏱️ С последнего скрина отзыва: <b>{last_review_line}</b>",
+        "",
+        "🧾 <b>Последние 5 попыток</b>",
+        *(attempt_lines or ["—"]),
+    ]
+
+    await state.clear()
+    await message.answer("\n".join(stats_lines), parse_mode="HTML", reply_markup=admin_main())
+
+
 @router.callback_query(F.data == "admin:tasks")
 async def tasks_menu(cb: CallbackQuery, **data):
     await cb.answer()
@@ -158,11 +294,190 @@ async def tasks_menu(cb: CallbackQuery, **data):
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="➕ Добавить задание", callback_data="admin:tasks_add")],
+                [InlineKeyboardButton(text="✏️ Изменить объявление", callback_data="admin:tasks_edit")],
                 [InlineKeyboardButton(text="🗑️ Удалить задание", callback_data="admin:tasks_delete")],
                 [InlineKeyboardButton(text="◀ Назад", callback_data="admin:back_main")],
             ]
         ),
     )
+
+
+@router.callback_query(F.data == "admin:tasks_edit")
+async def admin_tasks_edit_menu(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    await state.clear()
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+    items = await task_repo.get_all()
+    items_sorted = sorted(items, key=lambda x: x.id)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    if not items_sorted:
+        await cb.message.answer("Заданий пока нет.", reply_markup=admin_main())
+        return
+
+    lines = []
+    kb = InlineKeyboardMarkup(inline_keyboard=[])
+    for idx, item in enumerate(items_sorted, start=1):
+        label = f"{idx}"
+        vc = (getattr(item, "venue_city", None) or "").strip() or "—"
+        sp = (item.sphere or "").strip() or "—"
+        sp_short = sp[:24] + "…" if len(sp) > 24 else sp
+        owner = "админ" if item.created_by_user_id is None else f"менеджер {item.created_by_user_id}"
+        lines.append(
+            f"{idx}) ID {item.id} | {item.platform} | {owner} | город: {vc} | {sp_short} | "
+            f"{float(item.price):.2f} руб. | {'ON' if item.is_active else 'OFF'}"
+        )
+        kb.inline_keyboard.append([InlineKeyboardButton(text=label, callback_data=f"admin:tasks_edit_pick:{item.id}")])
+    kb.inline_keyboard.append([InlineKeyboardButton(text="◀ Назад", callback_data="admin:tasks")])
+
+    await cb.message.answer("Выберите задание для изменения:\n\n" + "\n".join(lines), reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("admin:tasks_edit_pick:"))
+async def admin_tasks_edit_pick(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    await state.clear()
+    task_id = int(cb.data.split(":")[2])
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+    task = await task_repo.get_by_id(task_id)
+    if not task:
+        await cb.message.answer("Задание не найдено.", reply_markup=admin_main())
+        return
+
+    await state.update_data(edit_task_id=task_id)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Цена", callback_data=f"admin:tasks_edit_field:{task_id}:price")],
+            [InlineKeyboardButton(text="🏙️ Город организации", callback_data=f"admin:tasks_edit_field:{task_id}:venue_city")],
+            [InlineKeyboardButton(text="🏷️ Сфера", callback_data=f"admin:tasks_edit_field:{task_id}:sphere")],
+            [InlineKeyboardButton(text="📝 Инструкция/ссылка (полностью)", callback_data=f"admin:tasks_edit_field:{task_id}:instruction_url")],
+            [InlineKeyboardButton(text="📆 Лимит в день", callback_data=f"admin:tasks_edit_field:{task_id}:daily_issue_count")],
+            [InlineKeyboardButton(text="🔁 Вкл/выкл", callback_data=f"admin:tasks_edit_field:{task_id}:toggle_active")],
+            [InlineKeyboardButton(text="◀ Назад", callback_data="admin:tasks_edit")],
+        ]
+    )
+    await cb.message.answer(
+        f"✏️ Редактирование задания #{task.id}\n"
+        f"{task.platform} | {(getattr(task, 'venue_city', '') or '—').strip()} | {(task.sphere or '—').strip()} | {float(task.price):.2f} руб.",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(F.data.startswith("admin:tasks_edit_field:"))
+async def admin_tasks_edit_field(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    parts = cb.data.split(":")
+    task_id = int(parts[2])
+    field = parts[3]
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+    task = await task_repo.get_by_id(task_id)
+    if not task:
+        await state.clear()
+        await cb.message.answer("Задание не найдено.", reply_markup=admin_main())
+        return
+
+    if field == "toggle_active":
+        await task_repo.toggle_active(task_id)
+        await state.clear()
+        await cb.message.answer("✅ Готово: статус задания переключён.", reply_markup=admin_main())
+        return
+
+    await state.set_state(AdminFSM.waiting_task_edit_value)
+    await state.update_data(edit_task_id=task_id, edit_field=field)
+
+    prompt = "Введите новое значение."
+    if field == "price":
+        prompt = "Введите новую цену (число), например 130"
+    elif field == "venue_city":
+        prompt = "Введите новый город организации, например: Москва"
+    elif field == "sphere":
+        prompt = "Введите новую сферу, например: Стоматология"
+    elif field == "instruction_url":
+        prompt = "Введите новый текст инструкции (можно со ссылкой). Это полностью заменит текущую инструкцию."
+    elif field == "daily_issue_count":
+        prompt = "Введите лимит выдачи в день (1..10)."
+
+    await cb.message.answer(prompt, reply_markup=admin_back_main_kb())
+
+
+@router.message(AdminFSM.waiting_task_edit_value, F.text)
+async def admin_tasks_edit_value_save(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    task_repo = TaskItemRepository(session)
+    settings = await SettingsRepository(session).get()
+
+    d = await state.get_data()
+    task_id = int(d.get("edit_task_id") or 0)
+    field = (d.get("edit_field") or "").strip()
+    task = await task_repo.get_by_id(task_id)
+    if not task:
+        await state.clear()
+        await message.answer("Задание не найдено.", reply_markup=admin_main())
+        return
+
+    raw = (message.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+
+    # validation / mapping
+    value = raw
+    if field == "price":
+        try:
+            new_price = Decimal(raw.replace(",", "."))
+        except Exception:
+            await message.answer("Некорректное число. Повторите, например 130.")
+            return
+        if new_price <= 0:
+            await message.answer("Цена должна быть больше 0.")
+            return
+        # минимальная цена по платформе
+        min_price = None
+        if task.platform == "Яндекс карты":
+            min_price = settings.min_review_price_yandex
+        elif task.platform == "Google карты":
+            min_price = settings.min_review_price_google
+        elif task.platform == "2ГИС":
+            min_price = settings.min_review_price_2gis
+        if min_price is not None and float(new_price) < float(min_price):
+            await message.answer(f"Минимальная цена для {task.platform} = {min_price} руб. Ниже нельзя.")
+            return
+        value = str(new_price)
+    elif field == "venue_city":
+        if len(raw) < 2:
+            await message.answer("Город слишком короткий.")
+            return
+    elif field == "sphere":
+        if len(raw) < 2:
+            await message.answer("Сфера слишком короткая.")
+            return
+    elif field == "daily_issue_count":
+        try:
+            n = int(raw)
+        except Exception:
+            await message.answer("Введите целое число 1..10.")
+            return
+        if n < 1 or n > 10:
+            await message.answer("Число должно быть в диапазоне 1..10.")
+            return
+        value = str(n)
+
+    ok = await task_repo.update_field(task_id, field, value)
+    if not ok:
+        await message.answer("Не удалось сохранить (проверьте значение).", reply_markup=admin_main())
+        await state.clear()
+        return
+
+    await state.clear()
+    await message.answer("✅ Изменение сохранено.", reply_markup=admin_main())
 
 
 @router.callback_query(F.data == "admin:back_main")

@@ -28,6 +28,7 @@ class ManagerFSM(StatesGroup):
     waiting_task_daily_custom = State()  # шаг 7: ввод своего числа (1..10)
     waiting_task_venue_link = State()  # шаг 8: ссылка
     waiting_broadcast_content = State()
+    waiting_task_edit_value = State()  # редактирование задания: ввод нового значения
 
 
 class AdminFSM(StatesGroup):
@@ -47,6 +48,8 @@ class AdminFSM(StatesGroup):
     waiting_target_user = State()
     waiting_user_query = State()
     waiting_balance_change = State()  # ввод команды /balance +100 <id|@username>
+    waiting_user_profile_query = State()  # ввод ID или @username для просмотра ЛК пользователя
+    waiting_task_edit_value = State()  # редактирование задания: ввод нового значения
     waiting_settings_value = State()
     waiting_export_date_from = State()
     waiting_export_date_to = State()
