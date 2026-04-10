@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Напоминания исполнителям: через N часов после оплаты/завершения отзыва — можно снова взять задание на платформе."""
+"""Напоминания исполнителям: отсчёт от момента отправки скрина отзыва на проверку (submitted_at + N часов)."""
 from datetime import datetime, timedelta
 
 from aiogram import Bot
@@ -20,12 +20,19 @@ def reminder_hours_for_platform(platform: str, settings: BotSetting) -> int:
     return int(getattr(settings, "reminder_hours_other", None) or 24)
 
 
-async def schedule_executor_repeat_reminder(session, user_id: int, platform: str) -> None:
-    """Ставит (перезаписывает) одно ожидающее напоминание для user+platform."""
+async def schedule_executor_repeat_reminder(
+    session, user_id: int, platform: str, *, anchor: datetime | None = None
+) -> None:
+    """Ставит (перезаписывает) одно ожидающее напоминание для user+platform.
+
+    anchor — момент начала отсчёта (обычно submitted_at при отправке скрина на проверку).
+    Если не передан, используется текущее время (редкий fallback).
+    """
     settings = await SettingsRepository(session).get()
     hours = reminder_hours_for_platform(platform, settings)
     hours = max(1, min(hours, 24 * 90))  # 1 ч … 90 дн.
-    remind_at = datetime.utcnow() + timedelta(hours=hours)
+    start = anchor if anchor is not None else datetime.utcnow()
+    remind_at = start + timedelta(hours=hours)
     repo = ExecutorReminderRepository(session)
     await repo.reschedule(user_id, platform, remind_at)
 

@@ -28,6 +28,7 @@ from keyboards.user import (
     task_venue_cities_kb,
     tasks_all_done_kb,
 )
+from services.executor_repeat_reminder import schedule_executor_repeat_reminder
 from services.review_admin_instant import notify_admins_review_screenshot_received
 from utils.fsm import UserFSM
 from middlewares.rules import RULES_ACCEPT_CALLBACK_DATA
@@ -143,6 +144,9 @@ async def submit_executor_review_photo(
             task_sphere=task.sphere,
             task_price=float(task.price),
         )
+        anchor = getattr(updated, "submitted_at", None)
+        if anchor:
+            await schedule_executor_repeat_reminder(session, updated.user_id, task.platform, anchor=anchor)
 
     await state.clear()
     await message.answer("✅ Скриншот получен. Ожидайте проверки.", reply_markup=main_menu())

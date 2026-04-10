@@ -27,7 +27,6 @@ from database import (
 from keyboards.admin import admin_back_main_kb, admin_main, admin_reminder_settings_kb, moderation_kb, users_manage_kb, withdraw_kb
 from keyboards.manager import manager_payout_kb
 from keyboards.user import cancel_attempt_kb, main_menu
-from services.executor_repeat_reminder import schedule_executor_repeat_reminder
 from services.task_payout import grant_task_completion_rewards
 from utils.fsm import AdminFSM
 
@@ -59,7 +58,7 @@ def _reminder_settings_caption(settings) -> str:
     ot = int(getattr(settings, "reminder_hours_other", None) or 24)
     return (
         "⏰ <b>Напоминания исполнителям</b>\n\n"
-        "Через сколько <b>часов</b> после успешной оплаты/завершения отзыва бот пришлёт пользователю напоминание, "
+        "Через сколько <b>часов</b> после <b>отправки скрина отзыва на проверку</b> бот пришлёт пользователю напоминание, "
         "что снова можно взять задание на этой платформе.\n\n"
         f"• Яндекс карты: <b>{y}</b> ч\n"
         f"• 2ГИС: <b>{g2}</b> ч\n"
@@ -1228,7 +1227,6 @@ async def review_ok(cb: CallbackQuery, **data):
 
     amount = await grant_task_completion_rewards(session, attempt.user_id, task)
     await attempt_repo.mark_balance_credited(attempt_id)
-    await schedule_executor_repeat_reminder(session, attempt.user_id, task.platform)
     await cb.bot.send_message(attempt.user_id, f"✅ Ваш отзыв принят и оплачен! На баланс зачислено {amount:.2f} руб.")
     for aid in ADMIN_IDS:
         try:
