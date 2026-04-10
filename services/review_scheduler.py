@@ -1,8 +1,9 @@
 """Планировщик: напоминание админу о проверке отзыва (без кнопок, чтобы не спамить)."""
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from config import ADMIN_IDS, REVIEW_CHECK_DAYS, REVIEW_SCHEDULER_INTERVAL_MINUTES
+from config import ADMIN_IDS, EXECUTOR_REMINDER_INTERVAL_MINUTES, REVIEW_CHECK_DAYS, REVIEW_SCHEDULER_INTERVAL_MINUTES
 from database import AttemptRepository, TaskItemRepository, get_async_session
+from services.executor_repeat_reminder import process_due_executor_reminders
 
 
 async def check_due_reviews(bot) -> None:
@@ -39,6 +40,13 @@ def start_scheduler(bot) -> AsyncIOScheduler:
         check_due_reviews,
         "interval",
         minutes=max(1, REVIEW_SCHEDULER_INTERVAL_MINUTES),
+        kwargs={"bot": bot},
+        max_instances=1,
+    )
+    scheduler.add_job(
+        process_due_executor_reminders,
+        "interval",
+        minutes=max(1, EXECUTOR_REMINDER_INTERVAL_MINUTES),
         kwargs={"bot": bot},
         max_instances=1,
     )

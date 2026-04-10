@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -13,6 +13,7 @@ from .models import (
     Attempt,
     BalanceOperation,
     BotSetting,
+    ExecutorRepeatReminder,
     Referral,
     SecondAccountReview,
     TaskItem,
@@ -643,6 +644,10 @@ class SettingsRepository:
             min_review_price_yandex=130,
             min_review_price_google=35,
             min_review_price_2gis=12,
+            reminder_hours_yandex=60,
+            reminder_hours_2gis=24,
+            reminder_hours_google=24,
+            reminder_hours_other=24,
         )
         self.session.add(item)
         await self.session.flush()
@@ -652,6 +657,43 @@ class SettingsRepository:
         item = await self.get()
         setattr(item, field_name, value)
         await self.session.flush()
+
+
+class ExecutorReminderRepository:
+    """Напоминания исполнителю о возможности снова взять задание на платформе."""
+
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def reschedule(self, user_id: int, platform: str, remind_at: datetime) -> None:
+        p = (platform or "").strip()
+        await self.session.execute(
+            delete(ExecutorRepeatReminder).where(
+                ExecutorRepeatReminder.user_id == user_id,
+                ExecutorRepeatReminder.platform == p,
+                ExecutorRepeatReminder.sent.is_(False),
+            )
+        )
+        self.session.add(
+            ExecutorRepeatReminder(user_id=user_id, platform=p, remind_at=remind_at, sent=False)
+        )
+        await self.session.flush()
+
+    async def find_due(self, limit: int = 200) -> list[ExecutorRepeatReminder]:
+        now = datetime.utcnow()
+        result = await self.session.execute(
+            select(ExecutorRepeatReminder)
+            .where(ExecutorRepeatReminder.sent.is_(False), ExecutorRepeatReminder.remind_at <= now)
+            .order_by(ExecutorRepeatReminder.remind_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def mark_sent(self, reminder_id: int) -> None:
+        row = await self.session.get(ExecutorRepeatReminder, reminder_id)
+        if row:
+            row.sent = True
+            await self.session.flush()
 
 
 class StatsRepository:

@@ -11,6 +11,7 @@ def admin_main() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="✅ Допуск к заданиям", callback_data="admin:admission_queue")],
             [InlineKeyboardButton(text="📝 Подтверждение отзывов", callback_data="admin:reviews_queue")],
             [InlineKeyboardButton(text="🔎 ЛК пользователя", callback_data="admin:user_profile")],
+            [InlineKeyboardButton(text="⏰ Напоминания исполнителям", callback_data="admin:reminder_settings")],
             [InlineKeyboardButton(text="📊 Статистика", callback_data="admin:stats")],
             [InlineKeyboardButton(text="📢 Массовая рассылка", callback_data="admin:broadcast")],
             [InlineKeyboardButton(text="👤 Управление пользователями", callback_data="admin:users")],
@@ -134,5 +135,34 @@ def admin_tasks_analytics_root_kb() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Только админ", callback_data="admin:tan:admin")],
             [InlineKeyboardButton(text="Выбрать менеджера…", callback_data="admin:tan:pick_mgr")],
             [InlineKeyboardButton(text="◀ К аналитике", callback_data="admin:analytics_hub")],
+        ]
+    )
+
+
+def admin_reminder_settings_kb(settings) -> InlineKeyboardMarkup:
+    """Кнопки изменения интервалов (часы). settings — объект BotSetting."""
+    y = int(getattr(settings, "reminder_hours_yandex", None) or 60)
+    g2 = int(getattr(settings, "reminder_hours_2gis", None) or 24)
+    gg = int(getattr(settings, "reminder_hours_google", None) or 24)
+    ot = int(getattr(settings, "reminder_hours_other", None) or 24)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"Яндекс {y}ч −6", callback_data="admin:remh:yandex:-6"),
+                InlineKeyboardButton(text=f"+6", callback_data="admin:remh:yandex:6"),
+            ],
+            [
+                InlineKeyboardButton(text=f"2ГИС {g2}ч −1", callback_data="admin:remh:gis2:-1"),
+                InlineKeyboardButton(text=f"+1", callback_data="admin:remh:gis2:1"),
+            ],
+            [
+                InlineKeyboardButton(text=f"Google {gg}ч −1", callback_data="admin:remh:google:-1"),
+                InlineKeyboardButton(text=f"+1", callback_data="admin:remh:google:1"),
+            ],
+            [
+                InlineKeyboardButton(text=f"Другие {ot}ч −1", callback_data="admin:remh:other:-1"),
+                InlineKeyboardButton(text=f"+1", callback_data="admin:remh:other:1"),
+            ],
+            [InlineKeyboardButton(text="◀ Назад в админ-меню", callback_data="admin:back_main")],
         ]
     )

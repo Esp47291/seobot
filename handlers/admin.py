@@ -24,13 +24,21 @@ from database import (
     UserRepository,
     WithdrawalRepository,
 )
-from keyboards.admin import admin_back_main_kb, admin_main, moderation_kb, users_manage_kb, withdraw_kb
+from keyboards.admin import admin_back_main_kb, admin_main, admin_reminder_settings_kb, moderation_kb, users_manage_kb, withdraw_kb
 from keyboards.manager import manager_payout_kb
 from keyboards.user import cancel_attempt_kb, main_menu
+from services.executor_repeat_reminder import schedule_executor_repeat_reminder
 from services.task_payout import grant_task_completion_rewards
 from utils.fsm import AdminFSM
 
 router = Router(name="admin")
+
+_REMINDER_FIELD_BY_KEY = {
+    "yandex": "reminder_hours_yandex",
+    "gis2": "reminder_hours_2gis",
+    "google": "reminder_hours_google",
+    "other": "reminder_hours_other",
+}
 
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
@@ -42,6 +50,22 @@ def _extract_first_url(text: str | None) -> str | None:
     if not m:
         return None
     return m.group(0).rstrip(").,]>\"'")
+
+
+def _reminder_settings_caption(settings) -> str:
+    y = int(getattr(settings, "reminder_hours_yandex", None) or 60)
+    g2 = int(getattr(settings, "reminder_hours_2gis", None) or 24)
+    gg = int(getattr(settings, "reminder_hours_google", None) or 24)
+    ot = int(getattr(settings, "reminder_hours_other", None) or 24)
+    return (
+        "⏰ <b>Напоминания исполнителям</b>\n\n"
+        "Через сколько <b>часов</b> после успешной оплаты/завершения отзыва бот пришлёт пользователю напоминание, "
+        "что снова можно взять задание на этой платформе.\n\n"
+        f"• Яндекс карты: <b>{y}</b> ч\n"
+        f"• 2ГИС: <b>{g2}</b> ч\n"
+        f"• Google карты: <b>{gg}</b> ч\n"
+        f"• Другие платформы: <b>{ot}</b> ч"
+    )
 
 
 def _human_timedelta(dt: datetime) -> str:
@@ -293,6 +317,47 @@ async def admin_user_profile_show(message: Message, state: FSMContext, **data):
 
     await state.clear()
     await message.answer("\n".join(stats_lines), parse_mode="HTML", reply_markup=admin_main())
+
+
+@router.callback_query(F.data == "admin:reminder_settings")
+async def admin_reminder_settings_show(cb: CallbackQuery, **data):
+    await cb.answer()
+    settings = await SettingsRepository(data["session"]).get()
+    await cb.message.answer(
+        _reminder_settings_caption(settings),
+        parse_mode="HTML",
+        reply_markup=admin_reminder_settings_kb(settings),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:remh:"))
+async def admin_reminder_hours_adjust(cb: CallbackQuery, **data):
+    await cb.answer()
+    parts = cb.data.split(":")
+    if len(parts) != 4:
+        return
+    key = parts[2]
+    try:
+        delta = int(parts[3])
+    except ValueError:
+        return
+    field = _REMINDER_FIELD_BY_KEY.get(key)
+    if not field:
+        return
+    session = data["session"]
+    settings_repo = SettingsRepository(session)
+    settings = await settings_repo.get()
+    cur = int(getattr(settings, field) or 24)
+    new_v = cur + delta
+    new_v = max(1, min(new_v, 24 * 90))
+    await settings_repo.set_field(field, new_v)
+    settings = await settings_repo.get()
+    text = _reminder_settings_caption(settings)
+    kb = admin_reminder_settings_kb(settings)
+    try:
+        await cb.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await cb.message.answer(text, parse_mode="HTML", reply_markup=kb)
 
 
 @router.callback_query(F.data == "admin:tasks")
@@ -1163,6 +1228,7 @@ async def review_ok(cb: CallbackQuery, **data):
 
     amount = await grant_task_completion_rewards(session, attempt.user_id, task)
     await attempt_repo.mark_balance_credited(attempt_id)
+    await schedule_executor_repeat_reminder(session, attempt.user_id, task.platform)
     await cb.bot.send_message(attempt.user_id, f"✅ Ваш отзыв принят и оплачен! На баланс зачислено {amount:.2f} руб.")
     for aid in ADMIN_IDS:
         try:

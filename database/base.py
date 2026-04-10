@@ -69,6 +69,10 @@ async def migrate_sqlite_schema() -> None:
         await _sqlite_add_column_if_missing(conn, "users", "rules_prompted", "rules_prompted INTEGER NOT NULL DEFAULT 0")
         await _sqlite_add_column_if_missing(conn, "users", "news_accepted", "news_accepted INTEGER NOT NULL DEFAULT 0")
         await _sqlite_add_column_if_missing(conn, "users", "news_prompted", "news_prompted INTEGER NOT NULL DEFAULT 0")
+        await _sqlite_add_column_if_missing(conn, "bot_settings", "reminder_hours_yandex", "reminder_hours_yandex INTEGER NOT NULL DEFAULT 60")
+        await _sqlite_add_column_if_missing(conn, "bot_settings", "reminder_hours_2gis", "reminder_hours_2gis INTEGER NOT NULL DEFAULT 24")
+        await _sqlite_add_column_if_missing(conn, "bot_settings", "reminder_hours_google", "reminder_hours_google INTEGER NOT NULL DEFAULT 24")
+        await _sqlite_add_column_if_missing(conn, "bot_settings", "reminder_hours_other", "reminder_hours_other INTEGER NOT NULL DEFAULT 24")
 
 
 async def init_db() -> None:

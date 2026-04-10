@@ -148,6 +148,25 @@ class BotSetting(Base):
     min_review_price_google: Mapped[int] = mapped_column(Integer, default=35)
     min_review_price_2gis: Mapped[int] = mapped_column(Integer, default=12)
 
+    # Через сколько часов после завершения/оплаты отзыва напомнить исполнителю, что снова можно взять задание
+    reminder_hours_yandex: Mapped[int] = mapped_column(Integer, default=60)
+    reminder_hours_2gis: Mapped[int] = mapped_column(Integer, default=24)
+    reminder_hours_google: Mapped[int] = mapped_column(Integer, default=24)
+    reminder_hours_other: Mapped[int] = mapped_column(Integer, default=24)
+
+
+class ExecutorRepeatReminder(Base):
+    """Очередь напоминаний исполнителю о возможности снова взять задание на платформе."""
+
+    __tablename__ = "executor_repeat_reminders"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    platform: Mapped[str] = mapped_column(String(120))
+    remind_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    sent: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
 
 class Referral(Base):
     """
