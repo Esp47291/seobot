@@ -408,9 +408,13 @@ class AttemptRepository:
 
     async def approve(self, attempt_id: int) -> Attempt | None:
         attempt = await self.get_by_id(attempt_id)
-        if attempt:
-            attempt.status = "approved"
-            await self.session.flush()
+        if not attempt:
+            return None
+        # Допуск нажимают по заявке в очереди; иначе повторный клик не должен откатывать БД из‑за Telegram.
+        if attempt.status not in ("waiting_approval", "login_screenshot"):
+            return None
+        attempt.status = "approved"
+        await self.session.flush()
         return attempt
 
     async def decline(self, attempt_id: int, reason: str) -> Attempt | None:

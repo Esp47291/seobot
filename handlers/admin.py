@@ -29,6 +29,7 @@ from keyboards.manager import manager_payout_kb
 from keyboards.user import cancel_attempt_kb, main_menu
 from services.task_payout import grant_task_completion_rewards
 from utils.fsm import AdminFSM
+from utils.telegram_safe import safe_remove_reply_markup, send_screenshot_or_document
 
 router = Router(name="admin")
 
@@ -119,8 +120,11 @@ async def admission_queue(cb: CallbackQuery, **data):
         )
         file_id = (getattr(at, "account_screenshot_file_id", None) or "").strip()
         if file_id:
-            await cb.message.answer_photo(
-                photo=file_id,
+            # file_id мог прийти из фото или из документа (картинка файлом) — sendPhoto не всегда принимает.
+            await send_screenshot_or_document(
+                cb.bot,
+                cb.message.chat.id,
+                file_id,
                 caption=text,
                 reply_markup=moderation_kb(at.id, "pre"),
             )
@@ -173,8 +177,10 @@ async def reviews_queue(cb: CallbackQuery, **data):
 
         review_file_id = (getattr(at, "review_screenshot_file_id", None) or "").strip()
         if review_file_id:
-            await cb.message.answer_photo(
-                photo=review_file_id,
+            await send_screenshot_or_document(
+                cb.bot,
+                cb.message.chat.id,
+                review_file_id,
                 caption=text,
                 reply_markup=moderation_kb(at.id, "review"),
             )
@@ -1047,6 +1053,7 @@ async def admin_secacc_ok(cb: CallbackQuery, **data):
         await cb.message.answer("Уже обработано или заявка не найдена.")
         return
     await UserRepository(session).set_repeat_unlock_platform(rev.user_id, rev.platform, True)
+    await session.commit()
     try:
         await cb.bot.send_message(
             rev.user_id,
@@ -1054,7 +1061,7 @@ async def admin_secacc_ok(cb: CallbackQuery, **data):
         )
     except Exception:
         pass
-    await cb.message.edit_reply_markup(reply_markup=None)
+    await safe_remove_reply_markup(cb.message)
 
 
 @router.callback_query(F.data.startswith("admin:secacc_reject:"))
@@ -1067,6 +1074,7 @@ async def admin_secacc_reject(cb: CallbackQuery, **data):
     if not rev:
         await cb.message.answer("Уже обработано или заявка не найдена.")
         return
+    await session.commit()
     try:
         await cb.bot.send_message(
             rev.user_id,
@@ -1074,7 +1082,7 @@ async def admin_secacc_reject(cb: CallbackQuery, **data):
         )
     except Exception:
         pass
-    await cb.message.edit_reply_markup(reply_markup=None)
+    await safe_remove_reply_markup(cb.message)
 
 
 @router.callback_query(F.data.startswith("admin:allow:"))
@@ -1086,9 +1094,16 @@ async def allow_attempt(cb: CallbackQuery, **data):
     attempt_id = int(cb.data.split(":")[2])
     attempt = await attempt_repo.get_by_id(attempt_id)
     if not attempt:
+        await cb.message.answer("Заявка не найдена.")
         return
     task = await task_repo.get_by_id(attempt.task_item_id)
     if not task:
+        await cb.message.answer("Задание не найдено.")
+        return
+
+    if attempt.status not in ("waiting_approval", "login_screenshot"):
+        await cb.message.answer("Эта заявка уже обработана (обновите список допусков).")
+        await safe_remove_reply_markup(cb.message)
         return
 
     selected_prebuilt_text: str | None = None
@@ -1139,7 +1154,8 @@ async def allow_attempt(cb: CallbackQuery, **data):
                 pass
 
         await attempt_repo.decline(attempt_id, "Готовые тексты для задания закончились.")
-        await cb.message.edit_reply_markup(reply_markup=None)
+        await session.commit()
+        await safe_remove_reply_markup(cb.message)
         try:
             await cb.bot.send_message(
                 attempt.user_id,
@@ -1152,7 +1168,10 @@ async def allow_attempt(cb: CallbackQuery, **data):
 
     attempt = await attempt_repo.approve(attempt_id)
     if not attempt:
+        await cb.message.answer("Не удалось одобрить заявку (возможно, уже обработана).")
         return
+    await session.commit()
+
     text = (
         f"✅ Вы допущены! Ваша инструкция: {task.instruction_url}\n\n"
         "✍️ Этап 2/3: Опубликуйте отзыв по инструкции и пришлите сюда скриншот готового отзыва.\n"
@@ -1161,8 +1180,11 @@ async def allow_attempt(cb: CallbackQuery, **data):
         text += f"\n📝 Готовый текст для отзыва:\n{selected_prebuilt_text}\n"
     text += "\n❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
 
-    await cb.bot.send_message(attempt.user_id, text, reply_markup=cancel_attempt_kb())
-    await cb.message.edit_reply_markup(reply_markup=None)
+    try:
+        await cb.bot.send_message(attempt.user_id, text, reply_markup=cancel_attempt_kb())
+    except Exception:
+        pass
+    await safe_remove_reply_markup(cb.message)
 
 
 @router.callback_query(F.data.startswith("admin:decline:"))
@@ -1214,20 +1236,28 @@ async def review_ok(cb: CallbackQuery, **data):
             f"Реквизиты исполнителя:\n{req}\n\n"
             "Вы оплатили этот отзыв✅"
         )
+        await session.commit()
         try:
             await cb.bot.send_message(mgr_id, notify, reply_markup=manager_payout_kb(attempt_id))
         except Exception:
             pass
-        await cb.bot.send_message(
-            attempt.user_id,
-            "✅ Отзыв принят проверяющим. После оплаты от заказчика вознаграждение будет зачислено на баланс.",
-        )
-        await cb.message.edit_reply_markup(reply_markup=None)
+        try:
+            await cb.bot.send_message(
+                attempt.user_id,
+                "✅ Отзыв принят проверяющим. После оплаты от заказчика вознаграждение будет зачислено на баланс.",
+            )
+        except Exception:
+            pass
+        await safe_remove_reply_markup(cb.message)
         return
 
     amount = await grant_task_completion_rewards(session, attempt.user_id, task)
     await attempt_repo.mark_balance_credited(attempt_id)
-    await cb.bot.send_message(attempt.user_id, f"✅ Ваш отзыв принят и оплачен! На баланс зачислено {amount:.2f} руб.")
+    await session.commit()
+    try:
+        await cb.bot.send_message(attempt.user_id, f"✅ Ваш отзыв принят и оплачен! На баланс зачислено {amount:.2f} руб.")
+    except Exception:
+        pass
     for aid in ADMIN_IDS:
         try:
             await cb.bot.send_message(
@@ -1239,7 +1269,7 @@ async def review_ok(cb: CallbackQuery, **data):
             )
         except Exception:
             pass
-    await cb.message.edit_reply_markup(reply_markup=None)
+    await safe_remove_reply_markup(cb.message)
 
 
 @router.callback_query(F.data.startswith("admin:review_bad:"))
@@ -1285,9 +1315,13 @@ async def wd_paid(cb: CallbackQuery, **data):
     session = data["session"]
     wd_repo = WithdrawalRepository(session)
     wd = await wd_repo.mark_paid(int(cb.data.split(":")[2]))
+    await session.commit()
     if wd:
-        await cb.bot.send_message(wd.user_id, "✅ Ваша заявка на вывод выплачена.")
-    await cb.message.edit_reply_markup(reply_markup=None)
+        try:
+            await cb.bot.send_message(wd.user_id, "✅ Ваша заявка на вывод выплачена.")
+        except Exception:
+            pass
+    await safe_remove_reply_markup(cb.message)
 
 
 @router.callback_query(F.data.startswith("admin:wd_rej:"))
@@ -1302,8 +1336,12 @@ async def wd_rej(cb: CallbackQuery, **data):
         amount = float(wd.amount)
         await user_repo.add_balance(wd.user_id, amount)
         await bal_repo.add_operation(wd.user_id, amount, "withdraw_return", f"Возврат заявки #{wd.id}")
-        await cb.bot.send_message(wd.user_id, "❌ Заявка отклонена, сумма возвращена на баланс.")
-    await cb.message.edit_reply_markup(reply_markup=None)
+        try:
+            await cb.bot.send_message(wd.user_id, "❌ Заявка отклонена, сумма возвращена на баланс.")
+        except Exception:
+            pass
+    await session.commit()
+    await safe_remove_reply_markup(cb.message)
 
 
 @router.callback_query(F.data == "admin:broadcast")

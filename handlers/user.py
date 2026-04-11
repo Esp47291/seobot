@@ -5,7 +5,7 @@ from decimal import Decimal
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, Document, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from config import ADMIN_IDS, SUPPORT_URL
 from database import (
@@ -565,9 +565,19 @@ async def start_task(cb: CallbackQuery, state: FSMContext, **data):
     )
 
 
-@router.message(UserFSM.waiting_account_screenshot, F.photo)
-async def got_account_screenshot(message: Message, state: FSMContext, **data):
-    session = data["session"]
+def _is_image_document(doc: Document | None) -> bool:
+    if not doc:
+        return False
+    mt = (doc.mime_type or "").lower()
+    if mt.startswith("image/"):
+        return True
+    name = (doc.file_name or "").lower()
+    return any(name.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".gif"))
+
+
+async def _process_account_screenshot_file(
+    message: Message, state: FSMContext, session, file_id: str, photo_for_review_fallback: str | None
+) -> None:
     attempt_repo = AttemptRepository(session)
     task_repo = TaskItemRepository(session)
     state_data = await state.get_data()
@@ -589,9 +599,10 @@ async def got_account_screenshot(message: Message, state: FSMContext, **data):
 
     # Профиль уже одобрен, но FSM остался на этапе 1 — принимаем скрин как отзыв
     if attempt.status == "approved":
+        fid = photo_for_review_fallback or file_id
         await state.set_state(UserFSM.waiting_review_screenshot)
         await state.update_data(attempt_id=attempt.id)
-        await submit_executor_review_photo(message, state, session, attempt, message.photo[-1].file_id)
+        await submit_executor_review_photo(message, state, session, attempt, fid)
         return
 
     if attempt.account_screenshot_file_id is not None:
@@ -601,7 +612,6 @@ async def got_account_screenshot(message: Message, state: FSMContext, **data):
         )
         return
 
-    file_id = message.photo[-1].file_id
     await attempt_repo.set_account_screenshot(attempt.id, file_id)
     task = await task_repo.get_by_id(attempt.task_item_id)
     city_org, sphere_org = _task_card_venue_sphere(task)
@@ -618,6 +628,24 @@ async def got_account_screenshot(message: Message, state: FSMContext, **data):
         except Exception:
             pass
     await message.answer("Скриншот отправлен на модерацию. Ожидайте решение.")
+
+
+@router.message(UserFSM.waiting_account_screenshot, F.photo)
+async def got_account_screenshot(message: Message, state: FSMContext, **data):
+    session = data["session"]
+    file_id = message.photo[-1].file_id
+    await _process_account_screenshot_file(message, state, session, file_id, photo_for_review_fallback=file_id)
+
+
+@router.message(UserFSM.waiting_account_screenshot, F.document)
+async def got_account_screenshot_document(message: Message, state: FSMContext, **data):
+    if not _is_image_document(message.document):
+        await message.answer("Пришлите скрин профиля фото или файлом изображения (PNG, JPG и т.д.).")
+        return
+    session = data["session"]
+    await _process_account_screenshot_file(
+        message, state, session, message.document.file_id, photo_for_review_fallback=None
+    )
 
 
 @router.message(UserFSM.waiting_review_screenshot, F.photo)
@@ -901,5 +929,8 @@ async def wrong_input_task_flow(message: Message, state: FSMContext):
         return
     if st == UserFSM.waiting_second_account_screenshot.state:
         await message.answer("Пришлите скриншот профиля второго аккаунта одним фото.")
+        return
+    if st == UserFSM.waiting_account_screenshot.state:
+        await message.answer("Пришлите скрин профиля фото или файлом изображения (PNG, JPG и т.д.).")
         return
     await message.answer("Пожалуйста, отправьте скриншот изображением.")
