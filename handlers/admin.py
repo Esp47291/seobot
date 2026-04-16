@@ -52,6 +52,17 @@ def _extract_first_url(text: str | None) -> str | None:
     return m.group(0).rstrip(").,]>\"'")
 
 
+def _is_image_document_for_preb(doc) -> bool:
+    """Проверка, что документ — картинка (для готовых материалов с фото)."""
+    if not doc:
+        return False
+    mt = (getattr(doc, "mime_type", None) or "").lower()
+    if mt.startswith("image/"):
+        return True
+    name = (getattr(doc, "file_name", None) or "").lower()
+    return any(name.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".gif"))
+
+
 def _reminder_settings_caption(settings) -> str:
     y = int(getattr(settings, "reminder_hours_yandex", None) or 60)
     g2 = int(getattr(settings, "reminder_hours_2gis", None) or 24)
@@ -899,6 +910,38 @@ async def tasks_prebuilt_texts_with_photo_collect_photo(message: Message, state:
     item: dict[str, str] = {}
     fid = message.photo[-1].file_id
     item["photo_file_id"] = fid
+    if caption:
+        item["text"] = caption
+    texts.append(item)
+    await state.update_data(prebuilt_texts=texts)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    done_kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="admin:tasks_prebuilt_done")]]
+    )
+    await message.answer(
+        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
+        reply_markup=done_kb,
+    )
+
+
+@router.message(AdminFSM.waiting_task_prebuilt_texts_with_photo, F.document)
+async def tasks_prebuilt_texts_with_photo_collect_document(message: Message, state: FSMContext, **data):
+    """Поддержка картинок, отправленных файлом (Document) на шаге готовых материалов."""
+    if not _is_image_document_for_preb(message.document):
+        await message.answer("Пришлите картинку (фото) или воспользуйтесь режимом без фото.")
+        return
+
+    caption = (message.caption or "").strip()
+    if caption == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    item: dict[str, str] = {"photo_file_id": message.document.file_id}
     if caption:
         item["text"] = caption
     texts.append(item)
