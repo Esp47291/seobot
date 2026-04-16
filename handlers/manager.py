@@ -474,35 +474,21 @@ async def mgr_tasks_prebuilt_texts_collect(message: Message, state: FSMContext, 
     )
 
 
-@router.message(ManagerFSM.waiting_task_prebuilt_texts_with_photo, F.photo)
-async def mgr_tasks_prebuilt_texts_with_photo_collect_photo(message: Message, state: FSMContext, **data):
-    caption = (message.caption or "").strip()
-    if caption == "/cancel":
+@router.message(ManagerFSM.waiting_task_prebuilt_texts_with_photo)
+async def mgr_tasks_prebuilt_texts_with_photo_collect_any(message: Message, state: FSMContext, **data):
+    """
+    Общий обработчик для режима "готовые тексты с фото" у менеджера.
+    Telegram иногда присылает картинку как Document, иногда как Photo — либо в нестандартном виде при paste.
+    Этот хендлер гарантирует ответ и корректный сбор материалов.
+    """
+    # Общий /cancel (на случай, если пользователь введёт его текстом)
+    if (message.text or "").strip() == "/cancel":
         await state.clear()
         await message.answer("Отменено.", reply_markup=manager_main())
         return
 
     d = await state.get_data()
     texts = list(d.get("prebuilt_texts") or [])
-    item: dict[str, str] = {"photo_file_id": message.photo[-1].file_id}
-    if caption:
-        item["text"] = caption
-    texts.append(item)
-    await state.update_data(prebuilt_texts=texts)
-
-    await message.answer(
-        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
-        ),
-    )
-
-
-@router.message(ManagerFSM.waiting_task_prebuilt_texts_with_photo, F.document)
-async def mgr_tasks_prebuilt_texts_with_photo_collect_document(message: Message, state: FSMContext, **data):
-    if not _is_image_document_for_preb(message.document):
-        await message.answer("Пришлите картинку (фото) или воспользуйтесь режимом без фото.")
-        return
 
     caption = (message.caption or "").strip()
     if caption == "/cancel":
@@ -510,35 +496,28 @@ async def mgr_tasks_prebuilt_texts_with_photo_collect_document(message: Message,
         await message.answer("Отменено.", reply_markup=manager_main())
         return
 
-    d = await state.get_data()
-    texts = list(d.get("prebuilt_texts") or [])
-    item: dict[str, str] = {"photo_file_id": message.document.file_id}
-    if caption:
-        item["text"] = caption
+    item: dict[str, str] | None = None
+    if message.text:
+        raw = message.text.strip()
+        if raw:
+            item = {"text": raw}
+    elif message.photo:
+        item = {"photo_file_id": message.photo[-1].file_id}
+        if caption:
+            item["text"] = caption
+    elif message.document:
+        if not _is_image_document_for_preb(message.document):
+            await message.answer("Пришлите картинку (PNG/JPG) либо текст.")
+            return
+        item = {"photo_file_id": message.document.file_id}
+        if caption:
+            item["text"] = caption
+
+    if not item:
+        await message.answer("Пришлите картинку (PNG/JPG) или текст для готового варианта.")
+        return
+
     texts.append(item)
-    await state.update_data(prebuilt_texts=texts)
-
-    await message.answer(
-        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
-        ),
-    )
-
-
-@router.message(ManagerFSM.waiting_task_prebuilt_texts_with_photo, F.text)
-async def mgr_tasks_prebuilt_texts_with_photo_collect_text(message: Message, state: FSMContext, **data):
-    raw = (message.text or "").strip()
-    if raw == "/cancel":
-        await state.clear()
-        await message.answer("Отменено.", reply_markup=manager_main())
-        return
-    if not raw:
-        return
-
-    d = await state.get_data()
-    texts = list(d.get("prebuilt_texts") or [])
-    texts.append({"text": raw})
     await state.update_data(prebuilt_texts=texts)
 
     await message.answer(
