@@ -660,6 +660,22 @@ async def got_review_screenshot(message: Message, state: FSMContext, **data):
     await submit_executor_review_photo(message, state, session, attempt, message.photo[-1].file_id)
 
 
+@router.message(UserFSM.waiting_review_screenshot, F.document)
+async def got_review_screenshot_document(message: Message, state: FSMContext, **data):
+    """Некоторые клиенты/вставка Ctrl+V отправляют JPG как Document, а не как Photo."""
+    if not _is_image_document(message.document):
+        await message.answer("Пришлите скриншот отзыва картинкой (PNG/JPG/JPEG).")
+        return
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    attempt_id = (await state.get_data()).get("attempt_id")
+    attempt = await attempt_repo.get_by_id(attempt_id)
+    if not attempt or attempt.user_id != message.from_user.id:
+        await state.clear()
+        return
+    await submit_executor_review_photo(message, state, session, attempt, message.document.file_id)
+
+
 @router.message(UserFSM.waiting_profile_requisites, F.photo)
 async def profile_requisites_no_photo(message: Message):
     await message.answer("Пришлите реквизиты одним текстовым сообщением, без фото.")
@@ -678,6 +694,23 @@ async def got_review_screenshot_without_state(message: Message, state: FSMContex
     await state.set_state(UserFSM.waiting_review_screenshot)
     await state.update_data(attempt_id=attempt.id)
     await submit_executor_review_photo(message, state, session, attempt, message.photo[-1].file_id)
+
+
+@router.message(F.document)
+async def got_review_screenshot_without_state_document(message: Message, state: FSMContext, **data):
+    """Фолбэк без FSM: Document-изображение тоже можно принять как скрин отзыва."""
+    if await state.get_state() is not None:
+        return
+    if not _is_image_document(message.document):
+        return
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    attempt = await attempt_repo.get_last_by_user_status(message.from_user.id, "approved")
+    if not attempt or attempt.user_id != message.from_user.id:
+        return
+    await state.set_state(UserFSM.waiting_review_screenshot)
+    await state.update_data(attempt_id=attempt.id)
+    await submit_executor_review_photo(message, state, session, attempt, message.document.file_id)
 
 
 @router.callback_query(F.data == "cancel_attempt")
