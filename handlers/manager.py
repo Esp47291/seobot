@@ -26,14 +26,13 @@ router = Router(name="manager")
 
 
 def _is_image_document_for_preb(doc) -> bool:
-    """Проверка, что документ — картинка (для готовых материалов с фото)."""
-    if not doc:
-        return False
-    mt = (getattr(doc, "mime_type", None) or "").lower()
-    if mt.startswith("image/"):
-        return True
-    name = (getattr(doc, "file_name", None) or "").lower()
-    return any(name.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".gif"))
+    """
+    В менеджерском режиме готовых материалов принимаем ЛЮБОЙ document как фото.
+
+    Это сделано специально для поддержки Telegram Desktop / Ctrl+V, где JPG/PNG
+    часто помечаются как application/octet-stream и/или без расширения.
+    """
+    return bool(doc)
 
 @router.message(Command("manager"))
 async def cmd_manager(message: Message):

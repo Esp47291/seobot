@@ -53,14 +53,14 @@ def _extract_first_url(text: str | None) -> str | None:
 
 
 def _is_image_document_for_preb(doc) -> bool:
-    """Проверка, что документ — картинка (для готовых материалов с фото)."""
-    if not doc:
-        return False
-    mt = (getattr(doc, "mime_type", None) or "").lower()
-    if mt.startswith("image/"):
-        return True
-    name = (getattr(doc, "file_name", None) or "").lower()
-    return any(name.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".gif"))
+    """
+    В режиме готовых материалов (тексты с фото) для админа принимаем ЛЮБОЙ документ как фото.
+
+    Telegram Desktop и некоторые клиенты могут присылать JPG/PNG как document
+    с mime_type=application/octet-stream и без расширения, из-за чего строгая
+    проверка формата ломает UX. Здесь осознанно нет фильтра по типу.
+    """
+    return bool(doc)
 
 
 def _reminder_settings_caption(settings) -> str:
