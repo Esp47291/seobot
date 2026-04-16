@@ -684,7 +684,16 @@ async def profile_requisites_no_photo(message: Message):
 @router.message(F.photo)
 async def got_review_screenshot_without_state(message: Message, state: FSMContext, **data):
     """Если FSM сбросился, но есть одобренная попытка — принимаем скрин отзыва."""
-    if await state.get_state() is not None:
+    # Раньше этот обработчик молчал, если у пользователя уже был выставлен FSM-state,
+    # из-за чего фото могло не приниматься (в то время как текст обрабатывался).
+    # Здесь мы исключаем только те состояния, где фото точно имеет другое назначение.
+    st = await state.get_state()
+    if st in {
+        UserFSM.waiting_account_screenshot.state,
+        UserFSM.waiting_second_account_screenshot.state,
+        UserFSM.waiting_profile_requisites.state,
+        UserFSM.waiting_review_screenshot.state,
+    }:
         return
     session = data["session"]
     attempt_repo = AttemptRepository(session)
@@ -699,7 +708,13 @@ async def got_review_screenshot_without_state(message: Message, state: FSMContex
 @router.message(F.document)
 async def got_review_screenshot_without_state_document(message: Message, state: FSMContext, **data):
     """Фолбэк без FSM: Document-изображение тоже можно принять как скрин отзыва."""
-    if await state.get_state() is not None:
+    st = await state.get_state()
+    if st in {
+        UserFSM.waiting_account_screenshot.state,
+        UserFSM.waiting_second_account_screenshot.state,
+        UserFSM.waiting_profile_requisites.state,
+        UserFSM.waiting_review_screenshot.state,
+    }:
         return
     if not _is_image_document(message.document):
         return
