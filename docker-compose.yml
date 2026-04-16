@@ -1,0 +1,20 @@
+services:
+  bot:
+    build: .
+    container_name: seobot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Disable host proxy envs inside container (Telegram polling must go direct unless you set PROXY_URL explicitly)
+      PROXY_URL: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: "*"
+    volumes:
+      - ./data:/app/data
+    extra_hosts:
+      - "api.telegram.org:149.154.167.220"
+      - "osx.telegram.org:149.154.167.220"
+    # Telegram bot uses long polling; no ports required
+
