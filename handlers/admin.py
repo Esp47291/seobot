@@ -909,7 +909,8 @@ async def tasks_prebuilt_texts_with_photo_collect_photo(message: Message, state:
     texts = list((await state.get_data()).get("prebuilt_texts") or [])
     item: dict[str, str] = {}
     fid = message.photo[-1].file_id
-    item["photo_file_id"] = fid
+    item["media_type"] = "photo"
+    item["media_file_id"] = fid
     if caption:
         item["text"] = caption
     texts.append(item)
@@ -941,7 +942,7 @@ async def tasks_prebuilt_texts_with_photo_collect_document(message: Message, sta
 
     d = await state.get_data()
     texts = list(d.get("prebuilt_texts") or [])
-    item: dict[str, str] = {"photo_file_id": message.document.file_id}
+    item: dict[str, str] = {"media_type": "document", "media_file_id": message.document.file_id}
     if caption:
         item["text"] = caption
     texts.append(item)
@@ -1295,7 +1296,8 @@ async def allow_attempt(cb: CallbackQuery, **data):
         return
 
     selected_prebuilt_text: str | None = None
-    selected_prebuilt_photo_file_id: str | None = None
+    selected_prebuilt_media_type: str | None = None  # photo|document
+    selected_prebuilt_media_file_id: str | None = None
 
     # Если у задания есть готовые тексты — выдаём их по очереди по одному исполнителю.
     prebuilt_texts: list = []
@@ -1310,14 +1312,23 @@ async def allow_attempt(cb: CallbackQuery, **data):
     if prebuilt_texts and cursor < len(prebuilt_texts):
         selected_item = prebuilt_texts[cursor]
         selected_prebuilt_text = None
-        selected_prebuilt_photo_file_id = None
+        selected_prebuilt_media_type = None
+        selected_prebuilt_media_file_id = None
         if isinstance(selected_item, str):
             selected_prebuilt_text = selected_item
         elif isinstance(selected_item, dict):
             maybe_text = (selected_item.get("text") or "").strip()
             selected_prebuilt_text = maybe_text or None
-            maybe_fid = (selected_item.get("photo_file_id") or selected_item.get("photo") or "").strip()
-            selected_prebuilt_photo_file_id = maybe_fid or None
+            # Backward-compatible: older items stored as photo_file_id.
+            maybe_media_type = (selected_item.get("media_type") or "").strip().lower()
+            maybe_media_file_id = (selected_item.get("media_file_id") or "").strip()
+            if not maybe_media_file_id:
+                maybe_media_file_id = (selected_item.get("photo_file_id") or selected_item.get("photo") or "").strip()
+                if maybe_media_file_id:
+                    maybe_media_type = "photo"
+            if maybe_media_file_id:
+                selected_prebuilt_media_type = maybe_media_type or "photo"
+                selected_prebuilt_media_file_id = maybe_media_file_id
         task.prebuilt_text_cursor = cursor + 1
 
         # Когда тексты закончатся — отключаем задание и уведомляем владельца.
@@ -1377,19 +1388,27 @@ async def allow_attempt(cb: CallbackQuery, **data):
     if selected_prebuilt_text:
         base_text += f"\n📝 Готовый текст для отзыва:\n{selected_prebuilt_text}\n"
 
-    if selected_prebuilt_photo_file_id:
+    if selected_prebuilt_media_file_id:
         caption = (
             base_text
             + "\n📸 Прикрепите это фото к отзыву на площадке при публикации.\n"
             + "❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
         )
         try:
-            await cb.bot.send_photo(
-                attempt.user_id,
-                selected_prebuilt_photo_file_id,
-                caption=caption,
-                reply_markup=cancel_attempt_kb(),
-            )
+            if (selected_prebuilt_media_type or "").lower() == "document":
+                await cb.bot.send_document(
+                    attempt.user_id,
+                    selected_prebuilt_media_file_id,
+                    caption=caption,
+                    reply_markup=cancel_attempt_kb(),
+                )
+            else:
+                await cb.bot.send_photo(
+                    attempt.user_id,
+                    selected_prebuilt_media_file_id,
+                    caption=caption,
+                    reply_markup=cancel_attempt_kb(),
+                )
         except Exception:
             # Если Telegram не принимает file_id как photo (редкий кейс) — пробуем отправить как текст.
             try:

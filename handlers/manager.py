@@ -501,14 +501,14 @@ async def mgr_tasks_prebuilt_texts_with_photo_collect_any(message: Message, stat
         if raw:
             item = {"text": raw}
     elif message.photo:
-        item = {"photo_file_id": message.photo[-1].file_id}
+        item = {"media_type": "photo", "media_file_id": message.photo[-1].file_id}
         if caption:
             item["text"] = caption
     elif message.document:
         if not _is_image_document_for_preb(message.document):
             await message.answer("Пришлите картинку (PNG/JPG) либо текст.")
             return
-        item = {"photo_file_id": message.document.file_id}
+        item = {"media_type": "document", "media_file_id": message.document.file_id}
         if caption:
             item["text"] = caption
 

@@ -542,9 +542,13 @@ async def start_task(cb: CallbackQuery, state: FSMContext, **data):
         if active.status == "approved":
             await state.set_state(UserFSM.waiting_review_screenshot)
             await state.update_data(attempt_id=active.id)
+            venue_link = (getattr(task, "venue_link", None) or "").strip()
+            venue_line = f"\n🔗 Ссылка: {venue_link}\n" if venue_link else "\n"
             await cb.message.answer(
-                "Продолжите это задание: пришлите в чат скриншот опубликованного отзыва.\n\n"
-                "Реквизиты для выплаты должны быть указаны в «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
+                f"✅ Вы допущены! Ваша инструкция: {task.instruction_url}\n"
+                f"{venue_line}\n"
+                "✍️ Этап 2/3: Опубликуйте отзыв по инструкции и пришлите сюда скриншот готового отзыва.\n\n"
+                "❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
             )
             return
         if active.status in ("login_screenshot", "waiting_approval"):
@@ -637,17 +641,6 @@ async def got_account_screenshot(message: Message, state: FSMContext, **data):
     await _process_account_screenshot_file(message, state, session, file_id, photo_for_review_fallback=file_id)
 
 
-@router.message(UserFSM.waiting_account_screenshot, F.document)
-async def got_account_screenshot_document(message: Message, state: FSMContext, **data):
-    if not _is_image_document(message.document):
-        await message.answer("Пришлите скрин профиля фото или файлом изображения (PNG, JPG и т.д.).")
-        return
-    session = data["session"]
-    await _process_account_screenshot_file(
-        message, state, session, message.document.file_id, photo_for_review_fallback=None
-    )
-
-
 @router.message(UserFSM.waiting_review_screenshot, F.photo)
 async def got_review_screenshot(message: Message, state: FSMContext, **data):
     session = data["session"]
@@ -658,22 +651,6 @@ async def got_review_screenshot(message: Message, state: FSMContext, **data):
         await state.clear()
         return
     await submit_executor_review_photo(message, state, session, attempt, message.photo[-1].file_id)
-
-
-@router.message(UserFSM.waiting_review_screenshot, F.document)
-async def got_review_screenshot_document(message: Message, state: FSMContext, **data):
-    """Некоторые клиенты/вставка Ctrl+V отправляют JPG как Document, а не как Photo."""
-    if not _is_image_document(message.document):
-        await message.answer("Пришлите скриншот отзыва картинкой (PNG/JPG/JPEG).")
-        return
-    session = data["session"]
-    attempt_repo = AttemptRepository(session)
-    attempt_id = (await state.get_data()).get("attempt_id")
-    attempt = await attempt_repo.get_by_id(attempt_id)
-    if not attempt or attempt.user_id != message.from_user.id:
-        await state.clear()
-        return
-    await submit_executor_review_photo(message, state, session, attempt, message.document.file_id)
 
 
 @router.message(UserFSM.waiting_profile_requisites, F.photo)
@@ -690,17 +667,6 @@ def _allow_executor_fallback_media(message: Message) -> bool:
 @router.message(F.photo, _allow_executor_fallback_media)
 async def got_review_screenshot_without_state(message: Message, state: FSMContext, **data):
     """Если FSM сбросился, но есть одобренная попытка — принимаем скрин отзыва."""
-    # Раньше этот обработчик молчал, если у пользователя уже был выставлен FSM-state,
-    # из-за чего фото могло не приниматься (в то время как текст обрабатывался).
-    # Здесь мы исключаем только те состояния, где фото точно имеет другое назначение.
-    st = await state.get_state()
-    if st in {
-        UserFSM.waiting_account_screenshot.state,
-        UserFSM.waiting_second_account_screenshot.state,
-        UserFSM.waiting_profile_requisites.state,
-        UserFSM.waiting_review_screenshot.state,
-    }:
-        return
     session = data["session"]
     attempt_repo = AttemptRepository(session)
     attempt = await attempt_repo.get_last_by_user_status(message.from_user.id, "approved")
@@ -709,29 +675,6 @@ async def got_review_screenshot_without_state(message: Message, state: FSMContex
     await state.set_state(UserFSM.waiting_review_screenshot)
     await state.update_data(attempt_id=attempt.id)
     await submit_executor_review_photo(message, state, session, attempt, message.photo[-1].file_id)
-
-
-@router.message(F.document, _allow_executor_fallback_media)
-async def got_review_screenshot_without_state_document(message: Message, state: FSMContext, **data):
-    """Фолбэк без FSM: Document-изображение тоже можно принять как скрин отзыва."""
-    st = await state.get_state()
-    if st in {
-        UserFSM.waiting_account_screenshot.state,
-        UserFSM.waiting_second_account_screenshot.state,
-        UserFSM.waiting_profile_requisites.state,
-        UserFSM.waiting_review_screenshot.state,
-    }:
-        return
-    if not _is_image_document(message.document):
-        return
-    session = data["session"]
-    attempt_repo = AttemptRepository(session)
-    attempt = await attempt_repo.get_last_by_user_status(message.from_user.id, "approved")
-    if not attempt or attempt.user_id != message.from_user.id:
-        return
-    await state.set_state(UserFSM.waiting_review_screenshot)
-    await state.update_data(attempt_id=attempt.id)
-    await submit_executor_review_photo(message, state, session, attempt, message.document.file_id)
 
 
 @router.callback_query(F.data == "cancel_attempt")
