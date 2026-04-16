@@ -25,6 +25,16 @@ from utils.fsm import ManagerFSM
 router = Router(name="manager")
 
 
+def _is_image_document_for_preb(doc) -> bool:
+    """Проверка, что документ — картинка (для готовых материалов с фото)."""
+    if not doc:
+        return False
+    mt = (getattr(doc, "mime_type", None) or "").lower()
+    if mt.startswith("image/"):
+        return True
+    name = (getattr(doc, "file_name", None) or "").lower()
+    return any(name.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp", ".heic", ".gif"))
+
 @router.message(Command("manager"))
 async def cmd_manager(message: Message):
     await message.answer("Панель менеджера:", reply_markup=manager_main())
@@ -380,6 +390,7 @@ async def mgr_tasks_add_instruction(message: Message, state: FSMContext, **data)
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Готовые тексты", callback_data="mgr:tasks_prebuilt_yes")],
+                [InlineKeyboardButton(text="✅ Готовые тексты с фото", callback_data="mgr:tasks_prebuilt_yes_photo")],
                 [InlineKeyboardButton(text="⏭️ Без готовых текстов", callback_data="mgr:tasks_prebuilt_no")],
             ]
         ),
@@ -394,6 +405,25 @@ async def mgr_tasks_prebuilt_yes(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer(
         "Шаг 6/8.\nОтправляйте готовые тексты по очереди: 1 текст = 1 сообщение.\n"
         "Каждый текст будет выдан только одному исполнителю.\n\n"
+        "Когда закончите — нажмите «✅ Готово».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
+        ),
+    )
+
+
+@router.callback_query(F.data == "mgr:tasks_prebuilt_yes_photo")
+async def mgr_tasks_prebuilt_yes_photo(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await state.update_data(prebuilt_texts=[])
+    await state.set_state(ManagerFSM.waiting_task_prebuilt_texts_with_photo)
+    await cb.message.answer(
+        "Шаг 6/8.\nОтправляйте материалы по очереди: 1 сообщение = 1 готовый вариант для отзыва.\n\n"
+        "Можно так:\n"
+        "• фото с подписью (текстом)\n"
+        "• просто фото\n"
+        "• просто текст\n\n"
+        "Каждый вариант будет выдан только одному исполнителю.\n"
         "Когда закончите — нажмите «✅ Готово».",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
@@ -444,13 +474,88 @@ async def mgr_tasks_prebuilt_texts_collect(message: Message, state: FSMContext, 
     )
 
 
+@router.message(ManagerFSM.waiting_task_prebuilt_texts_with_photo, F.photo)
+async def mgr_tasks_prebuilt_texts_with_photo_collect_photo(message: Message, state: FSMContext, **data):
+    caption = (message.caption or "").strip()
+    if caption == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=manager_main())
+        return
+
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    item: dict[str, str] = {"photo_file_id": message.photo[-1].file_id}
+    if caption:
+        item["text"] = caption
+    texts.append(item)
+    await state.update_data(prebuilt_texts=texts)
+
+    await message.answer(
+        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
+        ),
+    )
+
+
+@router.message(ManagerFSM.waiting_task_prebuilt_texts_with_photo, F.document)
+async def mgr_tasks_prebuilt_texts_with_photo_collect_document(message: Message, state: FSMContext, **data):
+    if not _is_image_document_for_preb(message.document):
+        await message.answer("Пришлите картинку (фото) или воспользуйтесь режимом без фото.")
+        return
+
+    caption = (message.caption or "").strip()
+    if caption == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=manager_main())
+        return
+
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    item: dict[str, str] = {"photo_file_id": message.document.file_id}
+    if caption:
+        item["text"] = caption
+    texts.append(item)
+    await state.update_data(prebuilt_texts=texts)
+
+    await message.answer(
+        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
+        ),
+    )
+
+
+@router.message(ManagerFSM.waiting_task_prebuilt_texts_with_photo, F.text)
+async def mgr_tasks_prebuilt_texts_with_photo_collect_text(message: Message, state: FSMContext, **data):
+    raw = (message.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=manager_main())
+        return
+    if not raw:
+        return
+
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    texts.append({"text": raw})
+    await state.update_data(prebuilt_texts=texts)
+
+    await message.answer(
+        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
+        ),
+    )
+
+
 @router.callback_query(F.data == "mgr:tasks_prebuilt_done")
 async def mgr_tasks_prebuilt_done(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     d = await state.get_data()
     texts = list(d.get("prebuilt_texts") or [])
     if not texts:
-        await cb.message.answer("Сначала добавьте хотя бы 1 готовый текст.")
+        await cb.message.answer("Сначала добавьте хотя бы 1 готовый вариант (текст/фото).")
         return
 
     await state.set_state(ManagerFSM.waiting_task_prebuilt_mode)
