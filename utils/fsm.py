@@ -42,6 +42,7 @@ class AdminFSM(StatesGroup):
     waiting_task_instruction = State()  # шаг 5
     waiting_task_prebuilt_mode = State()  # шаг 6: готовые тексты / без них
     waiting_task_prebuilt_texts = State()  # шаг 6: ввод готовых текстов (по 1 сообщению)
+    waiting_task_prebuilt_texts_with_photo = State()  # шаг 6: ввод материалов (текст и/или фото) по 1 сообщению
     waiting_task_daily_custom = State()  # шаг 7: ввод своего числа (1..10)
     waiting_task_venue_link = State()  # шаг 8: ссылка
     waiting_broadcast_content = State()

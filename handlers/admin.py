@@ -792,6 +792,7 @@ async def tasks_add_instruction(message: Message, state: FSMContext, **data):
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Готовые тексты", callback_data="admin:tasks_prebuilt_yes")],
+                [InlineKeyboardButton(text="✅ Готовые тексты с фото", callback_data="admin:tasks_prebuilt_yes_photo")],
                 [InlineKeyboardButton(text="⏭️ Без готовых текстов", callback_data="admin:tasks_prebuilt_no")],
             ]
         ),
@@ -811,6 +812,28 @@ async def tasks_prebuilt_yes(cb: CallbackQuery, state: FSMContext, **data):
     await cb.message.answer(
         "Шаг 6/8.\nОтправляйте готовые тексты по очереди: 1 текст = 1 сообщение.\n"
         "Каждый текст будет выдан только одному исполнителю.\n\n"
+        "Когда закончите — нажмите «✅ Готово».",
+        reply_markup=done_kb,
+    )
+
+
+@router.callback_query(F.data == "admin:tasks_prebuilt_yes_photo")
+async def tasks_prebuilt_yes_photo(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    await state.update_data(prebuilt_texts=[])
+    await state.set_state(AdminFSM.waiting_task_prebuilt_texts_with_photo)
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    done_kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="admin:tasks_prebuilt_done")]]
+    )
+    await cb.message.answer(
+        "Шаг 6/8.\nОтправляйте материалы по очереди: 1 сообщение = 1 готовый вариант для отзыва.\n\n"
+        "Можно так:\n"
+        "• фото с подписью (текстом)\n"
+        "• просто фото\n"
+        "• просто текст\n\n"
+        "Каждый вариант будет выдан только одному исполнителю.\n"
         "Когда закончите — нажмите «✅ Готово».",
         reply_markup=done_kb,
     )
@@ -864,13 +887,67 @@ async def tasks_prebuilt_texts_collect(message: Message, state: FSMContext, **da
     )
 
 
+@router.message(AdminFSM.waiting_task_prebuilt_texts_with_photo, F.photo)
+async def tasks_prebuilt_texts_with_photo_collect_photo(message: Message, state: FSMContext, **data):
+    caption = (message.caption or "").strip()
+    if caption == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+
+    texts = list((await state.get_data()).get("prebuilt_texts") or [])
+    item: dict[str, str] = {}
+    fid = message.photo[-1].file_id
+    item["photo_file_id"] = fid
+    if caption:
+        item["text"] = caption
+    texts.append(item)
+    await state.update_data(prebuilt_texts=texts)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    done_kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="admin:tasks_prebuilt_done")]]
+    )
+    await message.answer(
+        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
+        reply_markup=done_kb,
+    )
+
+
+@router.message(AdminFSM.waiting_task_prebuilt_texts_with_photo, F.text)
+async def tasks_prebuilt_texts_with_photo_collect_text(message: Message, state: FSMContext, **data):
+    raw = (message.text or "").strip()
+    if raw == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=admin_main())
+        return
+    if not raw:
+        return
+
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+    texts.append({"text": raw})
+    await state.update_data(prebuilt_texts=texts)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    done_kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="admin:tasks_prebuilt_done")]]
+    )
+    await message.answer(
+        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
+        reply_markup=done_kb,
+    )
+
+
 @router.callback_query(F.data == "admin:tasks_prebuilt_done")
 async def tasks_prebuilt_done(cb: CallbackQuery, state: FSMContext, **data):
     await cb.answer()
     d = await state.get_data()
     texts = list(d.get("prebuilt_texts") or [])
     if not texts:
-        await cb.message.answer("Сначала добавьте хотя бы 1 готовый текст.")
+        await cb.message.answer("Сначала добавьте хотя бы 1 готовый вариант (текст/фото).")
         return
 
     await state.set_state(AdminFSM.waiting_task_prebuilt_mode)
@@ -1175,9 +1252,10 @@ async def allow_attempt(cb: CallbackQuery, **data):
         return
 
     selected_prebuilt_text: str | None = None
+    selected_prebuilt_photo_file_id: str | None = None
 
     # Если у задания есть готовые тексты — выдаём их по очереди по одному исполнителю.
-    prebuilt_texts: list[str] = []
+    prebuilt_texts: list = []
     try:
         prebuilt_texts = json.loads(getattr(task, "prebuilt_texts_json", "[]") or "[]")
         if not isinstance(prebuilt_texts, list):
@@ -1187,7 +1265,16 @@ async def allow_attempt(cb: CallbackQuery, **data):
 
     cursor = int(getattr(task, "prebuilt_text_cursor", 0) or 0)
     if prebuilt_texts and cursor < len(prebuilt_texts):
-        selected_prebuilt_text = prebuilt_texts[cursor]
+        selected_item = prebuilt_texts[cursor]
+        selected_prebuilt_text = None
+        selected_prebuilt_photo_file_id = None
+        if isinstance(selected_item, str):
+            selected_prebuilt_text = selected_item
+        elif isinstance(selected_item, dict):
+            maybe_text = (selected_item.get("text") or "").strip()
+            selected_prebuilt_text = maybe_text or None
+            maybe_fid = (selected_item.get("photo_file_id") or selected_item.get("photo") or "").strip()
+            selected_prebuilt_photo_file_id = maybe_fid or None
         task.prebuilt_text_cursor = cursor + 1
 
         # Когда тексты закончатся — отключаем задание и уведомляем владельца.
@@ -1198,7 +1285,7 @@ async def allow_attempt(cb: CallbackQuery, **data):
                 try:
                     await cb.bot.send_message(
                         task.created_by_user_id,
-                        "⚠️ Ваши готовые тексты для задания закончились.\n"
+                        "⚠️ Ваши готовые материалы для задания закончились.\n"
                         f"Задание #{task.id} больше не будет выдаваться.\n\n"
                         "Пожалуйста, удалите это задание и создайте новое с новыми текстами.",
                     )
@@ -1240,18 +1327,44 @@ async def allow_attempt(cb: CallbackQuery, **data):
         return
     await session.commit()
 
-    text = (
+    base_text = (
         f"✅ Вы допущены! Ваша инструкция: {task.instruction_url}\n\n"
         "✍️ Этап 2/3: Опубликуйте отзыв по инструкции и пришлите сюда скриншот готового отзыва.\n"
     )
     if selected_prebuilt_text:
-        text += f"\n📝 Готовый текст для отзыва:\n{selected_prebuilt_text}\n"
-    text += "\n❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
+        base_text += f"\n📝 Готовый текст для отзыва:\n{selected_prebuilt_text}\n"
 
-    try:
-        await cb.bot.send_message(attempt.user_id, text, reply_markup=cancel_attempt_kb())
-    except Exception:
-        pass
+    if selected_prebuilt_photo_file_id:
+        caption = (
+            base_text
+            + "\n📸 Прикрепите это фото к отзыву на площадке при публикации.\n"
+            + "❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
+        )
+        try:
+            await cb.bot.send_photo(
+                attempt.user_id,
+                selected_prebuilt_photo_file_id,
+                caption=caption,
+                reply_markup=cancel_attempt_kb(),
+            )
+        except Exception:
+            # Если Telegram не принимает file_id как photo (редкий кейс) — пробуем отправить как текст.
+            try:
+                await cb.bot.send_message(
+                    attempt.user_id,
+                    base_text
+                    + "\n📸 (не удалось отправить фото) Прикрепите к отзыву любое фото по вашему варианту.\n"
+                    + "❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты».",
+                    reply_markup=cancel_attempt_kb(),
+                )
+            except Exception:
+                pass
+    else:
+        base_text += "\n❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
+        try:
+            await cb.bot.send_message(attempt.user_id, base_text, reply_markup=cancel_attempt_kb())
+        except Exception:
+            pass
     await safe_remove_reply_markup(cb.message)
 
 
