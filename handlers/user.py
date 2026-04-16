@@ -7,7 +7,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Document, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from config import ADMIN_IDS, SUPPORT_URL
+from config import ADMIN_IDS, MANAGER_IDS, SUPPORT_URL
 from database import (
     AttemptRepository,
     BalanceRepository,
@@ -681,7 +681,13 @@ async def profile_requisites_no_photo(message: Message):
     await message.answer("Пришлите реквизиты одним текстовым сообщением, без фото.")
 
 
-@router.message(F.photo)
+def _allow_executor_fallback_media(message: Message) -> bool:
+    """Не перехватывать фото/файлы админов и менеджеров — их обрабатывают другие роутеры."""
+    uid = message.from_user.id
+    return uid not in ADMIN_IDS and uid not in MANAGER_IDS
+
+
+@router.message(F.photo, _allow_executor_fallback_media)
 async def got_review_screenshot_without_state(message: Message, state: FSMContext, **data):
     """Если FSM сбросился, но есть одобренная попытка — принимаем скрин отзыва."""
     # Раньше этот обработчик молчал, если у пользователя уже был выставлен FSM-state,
@@ -705,7 +711,7 @@ async def got_review_screenshot_without_state(message: Message, state: FSMContex
     await submit_executor_review_photo(message, state, session, attempt, message.photo[-1].file_id)
 
 
-@router.message(F.document)
+@router.message(F.document, _allow_executor_fallback_media)
 async def got_review_screenshot_without_state_document(message: Message, state: FSMContext, **data):
     """Фолбэк без FSM: Document-изображение тоже можно принять как скрин отзыва."""
     st = await state.get_state()
