@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Пользовательские хендлеры SeoJob / Отзовик."""
 import re
+from datetime import timedelta
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -29,6 +30,7 @@ from keyboards.admin import moderation_kb, second_account_moderation_kb, withdra
 from keyboards.user import (
     cabinet_back_kb,
     cabinet_reviews_nav_kb,
+    continue_attempt_kb,
     cancel_attempt_kb,
     main_menu,
     operations_history_kb,
@@ -159,6 +161,16 @@ def _gender_label(value: str) -> str:
     return "👥 Без разницы"
 
 
+def _msk_dt_str(dt) -> str:
+    if not dt:
+        return "—"
+    try:
+        msk = dt + timedelta(hours=3)
+        return msk.strftime("%d.%m.%y %H:%M")
+    except Exception:
+        return "—"
+
+
 def _task_matches_gender(task_gender: str | None, user_gender: str | None) -> bool:
     tg = (task_gender or "any").strip()
     ug = (user_gender or "any").strip()
@@ -238,6 +250,16 @@ async def _build_platform_rows_for_user(session, user, user_id: int) -> list[tup
         if available:
             out.append((platform, min_price))
     return out
+
+
+def _instruction_login_block(task) -> str:
+    return (
+        "⚙⚙️ Ознакомься с инструкцией и приступай к работе 👇🏻\n\n"
+        "📑 ОТКРЫТЬ ИНСТРУКЦИЮ\n"
+        f"{task.instruction_url}\n"
+        "‼️‼️‼️‼️‼️‼️‼️‼️‼️‼️\n"
+        f"✍🏻 Напиши свой логин из профиля аккаунта на платформе {task.platform} и отправь боту"
+    )
 
 
 async def _open_venue_city_choice(message: Message, state: FSMContext, session, user) -> bool:
@@ -381,6 +403,21 @@ async def start_cmd(message: Message, state: FSMContext, **data):
         await message.answer(f"🎁 Приветственный бонус: +{WELCOME_BONUS_AMOUNT} руб. уже на вашем балансе.")
     await message.answer("Чтобы начать, нажмите кнопку ниже 👇", reply_markup=welcome_start_kb())
 
+    active = await AttemptRepository(session).get_active_pipeline_attempt(message.from_user.id)
+    if active and active.status in {"approved", "waiting_approval", "login_screenshot"}:
+        task = await TaskItemRepository(session).get_by_id(active.task_item_id)
+        if task:
+            await state.set_state(UserFSM.waiting_profile_login)
+            await state.update_data(attempt_id=active.id)
+            await message.answer(
+                "📝 У тебя есть незаконченное задание:\n\n"
+                f"— Платформа: {task.platform}\n"
+                f"— Время начала: {_msk_dt_str(active.created_at)} (МСК)\n"
+                f"— 📖 ОТКРЫТЬ ИНСТРУКЦИЮ\n{task.instruction_url}\n\n"
+                "Нажми кнопку «Продолжить выполнение»",
+                reply_markup=continue_attempt_kb(),
+            )
+
 
 @router.callback_query(F.data == RULES_ACCEPT_CALLBACK_DATA)
 async def accept_rules(cb: CallbackQuery, state: FSMContext, **data):
@@ -478,6 +515,33 @@ async def gender_set(cb: CallbackQuery, state: FSMContext, **data):
     await cb.message.answer(
         f"✅ Пол аккаунта сохранён: {_gender_label(gender)}\n\n🗺 Теперь напишите ваш город, чтобы подобрать ближайшие задания."
     )
+
+
+@router.callback_query(F.data == "attempt:continue")
+async def attempt_continue(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    task_repo = TaskItemRepository(session)
+    active = await attempt_repo.get_active_pipeline_attempt(cb.from_user.id)
+    if not active:
+        await cb.message.answer("Активного задания не найдено. Нажмите «✍️ Приступить к заданию».")
+        return
+    task = await task_repo.get_by_id(active.task_item_id)
+    if not task:
+        await cb.message.answer("Задание не найдено. Нажмите «✍️ Приступить к заданию».")
+        return
+    if active.status == "review_submitted":
+        await cb.message.answer("По этому заданию отзыв уже отправлен на проверку. Ожидайте решения администратора.")
+        return
+    if (getattr(active, "profile_login", None) or "").strip():
+        await state.set_state(UserFSM.waiting_review_screenshot)
+        await state.update_data(attempt_id=active.id)
+        await cb.message.answer("🔜 Следующий этап - НАПИСАНИЕ ОТЗЫВА\n✍🏻 Напиши отзыв и отправь скриншот отзыва боту")
+        return
+    await state.set_state(UserFSM.waiting_profile_login)
+    await state.update_data(attempt_id=active.id)
+    await cb.message.answer(_instruction_login_block(task))
 
 
 @router.message(F.text == "✍️ Приступить к заданию")
@@ -746,18 +810,18 @@ async def start_task(cb: CallbackQuery, state: FSMContext, **data):
                 await state.set_state(UserFSM.waiting_review_screenshot)
                 await state.update_data(attempt_id=active.id)
                 await cb.message.answer(
-                    "🔜 Следующий этап — НАПИСАНИЕ ОТЗЫВА\n"
-                    "✍🏻 Напишите отзыв и отправьте скриншот отзыва боту."
+                    "🔜 Следующий этап - НАПИСАНИЕ ОТЗЫВА\n"
+                    "✍🏻 Напиши отзыв и отправь скриншот отзыва боту"
                 )
             else:
                 await state.set_state(UserFSM.waiting_profile_login)
                 await state.update_data(attempt_id=active.id)
-                await cb.message.answer("✍🏻 Напишите свой логин из профиля аккаунта на выбранной платформе.")
+                await cb.message.answer(_instruction_login_block(task))
             return
         if active.status in ("login_screenshot", "waiting_approval"):
             await state.set_state(UserFSM.waiting_profile_login)
             await state.update_data(attempt_id=active.id)
-            await cb.message.answer("✍🏻 Напишите свой логин из профиля аккаунта на выбранной платформе.")
+            await cb.message.answer(_instruction_login_block(task))
             return
 
     attempt = await attempt_repo.create(cb.from_user.id, task_id)
@@ -765,12 +829,7 @@ async def start_task(cb: CallbackQuery, state: FSMContext, **data):
     await user_repo.set_last_started_task_for_platform(cb.from_user.id, task.platform, task_id)
     await state.set_state(UserFSM.waiting_profile_login)
     await state.update_data(attempt_id=attempt.id)
-    await cb.message.answer(
-        "⚙️ Ознакомьтесь с инструкцией и приступайте к работе 👇\n\n"
-        f"{task.instruction_url}\n\n"
-        "⏰ На выполнение и отправку скриншота отзыва есть 1 час.\n"
-        "✍🏻 Шаг 1: Напишите свой логин из профиля аккаунта на платформе."
-    )
+    await cb.message.answer(_instruction_login_block(task))
 
 
 @router.message(UserFSM.waiting_profile_login, F.text)
@@ -790,8 +849,8 @@ async def got_profile_login(message: Message, state: FSMContext, **data):
     await state.set_state(UserFSM.waiting_review_screenshot)
     await state.update_data(attempt_id=attempt.id)
     await message.answer(
-        "🔜 Следующий этап — НАПИСАНИЕ ОТЗЫВА\n"
-        "✍🏻 Напишите отзыв и отправьте скриншот отзыва боту."
+        "🔜 Следующий этап - НАПИСАНИЕ ОТЗЫВА\n"
+        "✍🏻 Напиши отзыв и отправь скриншот отзыва боту"
     )
 
 

@@ -69,6 +69,14 @@ def welcome_start_kb() -> InlineKeyboardMarkup:
     )
 
 
+def continue_attempt_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Продолжить выполнение ▶️", callback_data="attempt:continue")],
+        ]
+    )
+
+
 def operations_history_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
