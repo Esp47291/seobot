@@ -8,6 +8,7 @@ class UserFSM(StatesGroup):
     choosing_city = State()  # устар.: ввод города в профиль (если останется отдельный сценарий)
     choosing_venue_city = State()  # город организаций с заданиями (до выбора платформы)
     choosing_platform = State()
+    waiting_profile_login = State()
     waiting_account_screenshot = State()
     waiting_review_screenshot = State()
     waiting_profile_requisites = State()
@@ -19,6 +20,7 @@ class UserFSM(StatesGroup):
 class ManagerFSM(StatesGroup):
     """FSM панели менеджера (отдельно от админа, чтобы состояния не пересекались)."""
     waiting_task_platform = State()
+    waiting_task_gender = State()
     waiting_task_price = State()
     waiting_task_venue_city = State()
     waiting_task_sphere = State()
@@ -37,6 +39,7 @@ class AdminFSM(StatesGroup):
     waiting_reject_reason = State()
     # Добавление задания (inline-поток)
     waiting_task_platform = State()  # шаг 1
+    waiting_task_gender = State()  # шаг 1.5
     waiting_task_price = State()  # шаг 2
     waiting_task_venue_city = State()  # шаг 3 — город организации для карточки
     waiting_task_sphere = State()  # шаг 4 — сфера для карточки

@@ -35,6 +35,10 @@ class User(Base):
     # Это не реальная проверка подписки — пользователь сам подтверждает кнопкой.
     news_accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     news_prompted: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Пол аккаунта на площадках: male / female / any(не выбрано)
+    account_gender: Mapped[str] = mapped_column(String(16), default="any")
+    # Одноразовый приветственный бонус новым пользователям.
+    welcome_bonus_credited: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class SecondAccountReview(Base):
@@ -75,6 +79,8 @@ class TaskItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     # Telegram user_id менеджера, разместившего задание; NULL = задание админа
     created_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    # Кто может выполнить задание: any / male / female
+    allowed_gender: Mapped[str] = mapped_column(String(16), default="any")
 
 
 class Attempt(Base):
@@ -91,6 +97,10 @@ class Attempt(Base):
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     check_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     review_check_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Логин исполнителя на площадке (вместо шага со скрином профиля).
+    profile_login: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Чтобы не слать сообщение о таймауте повторно.
+    timeout_notified: Mapped[bool] = mapped_column(Boolean, default=False)
     payout_requisites: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Для заданий менеджера: баланс начисляется после нажатия «Оплатил»
     balance_credited: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -8,7 +8,13 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Document, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from config import ADMIN_IDS, MANAGER_IDS, SUPPORT_URL
+from config import (
+    ADMIN_IDS,
+    MANAGER_IDS,
+    SUPPORT_URL,
+    WELCOME_BONUS_AMOUNT,
+    welcome_bonus_start_datetime_utc,
+)
 from database import (
     AttemptRepository,
     BalanceRepository,
@@ -30,9 +36,11 @@ from keyboards.user import (
     task_card_kb,
     task_venue_cities_kb,
     tasks_all_done_kb,
+    welcome_start_kb,
 )
 from utils.telegram_safe import send_screenshot_or_document
 from services.executor_repeat_reminder import schedule_executor_repeat_reminder
+from services.geocoding import distance_km, geocode_city
 from services.review_admin_instant import notify_admins_review_screenshot_received
 from utils.fsm import UserFSM
 from middlewares.rules import RULES_ACCEPT_CALLBACK_DATA
@@ -143,6 +151,95 @@ def _task_card_venue_sphere(task) -> tuple[str, str]:
     return (v if v else "—", s if s else "—")
 
 
+def _gender_label(value: str) -> str:
+    if value == "male":
+        return "👨 Мужской"
+    if value == "female":
+        return "👩 Женский"
+    return "👥 Без разницы"
+
+
+def _task_matches_gender(task_gender: str | None, user_gender: str | None) -> bool:
+    tg = (task_gender or "any").strip()
+    ug = (user_gender or "any").strip()
+    if tg == "any" or ug == "any":
+        return True
+    return tg == ug
+
+
+def _platforms_kb_with_prices(rows: list[tuple[str, float]]) -> InlineKeyboardMarkup:
+    btn_rows = []
+    for platform, price in rows:
+        btn_rows.append([InlineKeyboardButton(text=f"{platform} [{price:.0f} руб.]", callback_data=f"platform:{platform}")])
+    btn_rows.append([InlineKeyboardButton(text="🔙 В главное меню", callback_data="to_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=btn_rows)
+
+
+async def _grant_welcome_bonus_if_needed(session, user_id: int) -> bool:
+    user_repo = UserRepository(session)
+    bal_repo = BalanceRepository(session)
+    user = await user_repo.get_by_user_id(user_id)
+    if not user:
+        return False
+    if getattr(user, "welcome_bonus_credited", False):
+        return False
+    if getattr(user, "registered_at", None) and user.registered_at < welcome_bonus_start_datetime_utc():
+        return False
+    await user_repo.add_balance(user_id, float(WELCOME_BONUS_AMOUNT))
+    await bal_repo.add_operation(
+        user_id,
+        float(WELCOME_BONUS_AMOUNT),
+        "welcome_bonus",
+        f"Приветственный бонус {WELCOME_BONUS_AMOUNT} руб.",
+    )
+    await user_repo.mark_welcome_bonus_credited(user_id)
+    return True
+
+
+async def _get_nearest_tasks_for_platform(session, user, platform: str):
+    task_repo = TaskItemRepository(session)
+    all_tasks = await task_repo.get_active_for_platform(platform, user.city if user else None)
+    if not all_tasks:
+        return []
+    user_point = await geocode_city(user.city or "")
+    if not user_point:
+        return all_tasks
+
+    weighted = []
+    for t in all_tasks:
+        venue = (getattr(t, "venue_city", None) or "").strip()
+        if not venue:
+            weighted.append((999999.0, t.id, t))
+            continue
+        p = await geocode_city(venue)
+        if not p:
+            weighted.append((999999.0, t.id, t))
+            continue
+        weighted.append((distance_km(user_point, p), t.id, t))
+    weighted.sort(key=lambda x: (x[0], x[1]))
+    return [x[2] for x in weighted]
+
+
+async def _build_platform_rows_for_user(session, user, user_id: int) -> list[tuple[str, float]]:
+    task_repo = TaskItemRepository(session)
+    attempt_repo = AttemptRepository(session)
+    user_repo = UserRepository(session)
+    rows = await task_repo.get_platforms_with_min_price(user.city if user else None)
+    completed_ids = await attempt_repo.completed_task_item_ids(user_id)
+    unlock_map = await user_repo.get_repeat_unlock_map(user_id)
+    out: list[tuple[str, float]] = []
+    for platform, min_price in rows:
+        tasks = await _get_nearest_tasks_for_platform(session, user, platform)
+        tasks = [t for t in tasks if _task_matches_gender(getattr(t, "allowed_gender", "any"), user.account_gender)]
+        if unlock_map.get(platform):
+            available = tasks
+        else:
+            available = [t for t in tasks if t.id not in completed_ids]
+        if available:
+            out.append((platform, min_price))
+    return out
+
+
 async def _open_venue_city_choice(message: Message, state: FSMContext, session, user) -> bool:
     """Показать инлайн-города с заданиями. False — нечего показать."""
     task_repo = TaskItemRepository(session)
@@ -205,6 +302,7 @@ async def submit_executor_review_photo(
             task_platform=task.platform,
             task_sphere=task.sphere,
             task_price=float(task.price),
+            profile_login=(getattr(updated, "profile_login", None) or "").strip() or None,
         )
         anchor = getattr(updated, "submitted_at", None)
         if anchor:
@@ -230,10 +328,11 @@ async def _show_task_card(
     await state.update_data(task_ids=task_ids, task_index=index)
     city_org, sphere_org = _task_card_venue_sphere(task)
     text = (
-        f"Платформа: {task.platform}\n"
-        f"Город (организация): {city_org}\n"
-        f"Сфера: {sphere_org}\n"
-        f"Вознаграждение: {float(task.price):.2f} руб."
+        f"✍🏻 Вы выбрали задание {task.platform}\n\n"
+        f"🏘 Город: {city_org}\n"
+        f"♻️ Сфера: {sphere_org}\n"
+        f"💰 Цена: {float(task.price):.2f} ₽\n"
+        "⏰ Выполнение задания занимает около 5-10 минут!"
     )
     await message.answer(text, reply_markup=task_card_kb(task.id))
 
@@ -276,7 +375,11 @@ async def start_cmd(message: Message, state: FSMContext, **data):
         # рефералы — бонус. Ошибки парсинга не ломают регистрацию пользователя
         pass
 
+    got_bonus = await _grant_welcome_bonus_if_needed(session, message.from_user.id)
     await message.answer(settings.welcome_text, reply_markup=main_menu())
+    if got_bonus:
+        await message.answer(f"🎁 Приветственный бонус: +{WELCOME_BONUS_AMOUNT} руб. уже на вашем балансе.")
+    await message.answer("Чтобы начать, нажмите кнопку ниже 👇", reply_markup=welcome_start_kb())
 
 
 @router.callback_query(F.data == RULES_ACCEPT_CALLBACK_DATA)
@@ -308,7 +411,11 @@ async def accept_rules(cb: CallbackQuery, state: FSMContext, **data):
         pass
 
     settings = await settings_repo.get()
+    got_bonus = await _grant_welcome_bonus_if_needed(session, cb.from_user.id)
     await cb.message.answer(settings.welcome_text, reply_markup=main_menu())
+    if got_bonus:
+        await cb.message.answer(f"🎁 Приветственный бонус: +{WELCOME_BONUS_AMOUNT} руб. уже на вашем балансе.")
+    await cb.message.answer("Чтобы начать, нажмите кнопку ниже 👇", reply_markup=welcome_start_kb())
 
 
 @router.message(Command("menu"))
@@ -331,6 +438,46 @@ async def menu_cmd(message: Message, state: FSMContext, **data):
         return
 
     await message.answer(settings.welcome_text, reply_markup=main_menu())
+    await message.answer("Чтобы начать, нажмите кнопку ниже 👇", reply_markup=welcome_start_kb())
+
+
+def _gender_pick_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👨 Мужской", callback_data="gender:set:male")],
+            [InlineKeyboardButton(text="👩 Женский", callback_data="gender:set:female")],
+        ]
+    )
+
+
+@router.callback_query(F.data == "welcome:start_work")
+async def welcome_start_work(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    session = data["session"]
+    user = await UserRepository(session).get_by_user_id(cb.from_user.id)
+    if not user:
+        await cb.message.answer("Нажмите /start.")
+        return
+    if (getattr(user, "account_gender", "any") or "any") == "any":
+        await cb.message.answer("🧑 Для работы выберите пол аккаунта на платформе:", reply_markup=_gender_pick_kb())
+        return
+    await state.set_state(UserFSM.choosing_city)
+    await cb.message.answer("🗺 Напишите ваш город, чтобы подобрать ближайшие задания.")
+
+
+@router.callback_query(F.data.startswith("gender:set:"))
+async def gender_set(cb: CallbackQuery, state: FSMContext, **data):
+    await cb.answer()
+    gender = cb.data.split(":")[-1]
+    if gender not in {"male", "female"}:
+        await cb.message.answer("Некорректный выбор пола.")
+        return
+    session = data["session"]
+    await UserRepository(session).set_account_gender(cb.from_user.id, gender)
+    await state.set_state(UserFSM.choosing_city)
+    await cb.message.answer(
+        f"✅ Пол аккаунта сохранён: {_gender_label(gender)}\n\n🗺 Теперь напишите ваш город, чтобы подобрать ближайшие задания."
+    )
 
 
 @router.message(F.text == "✍️ Приступить к заданию")
@@ -342,27 +489,11 @@ async def begin_tasks(message: Message, state: FSMContext, **data):
         await message.answer("Нажмите /start.")
         return
 
-    # Additional gate before starting tasks: subscribe to the news channel.
-    if not getattr(user, "news_accepted", False):
-        # Show prompt only once. After that, we treat the user as "accepted"
-        # once they try to proceed again (since we only use a URL button).
-        if not getattr(user, "news_prompted", False):
-            user.news_prompted = True
-            await session.flush()
-            await message.answer(
-                NEWS_PROMPT_TEXT,
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="Job Inside", url=NEWS_CHANNEL_URL)],
-                    ]
-                ),
-            )
-            return
-
-        user.news_accepted = True
-        await session.flush()
-
-    await _open_venue_city_choice(message, state, session, user)
+    if (getattr(user, "account_gender", "any") or "any") == "any":
+        await message.answer("🧑 Для работы выберите пол аккаунта на платформе:", reply_markup=_gender_pick_kb())
+        return
+    await state.set_state(UserFSM.choosing_city)
+    await message.answer("🗺 Напишите ваш город, чтобы подобрать ближайшие задания.")
 
 
 @router.message(UserFSM.choosing_city, F.text)
@@ -375,9 +506,23 @@ async def choose_city(message: Message, state: FSMContext, **data):
     user_repo = UserRepository(session)
     await user_repo.set_city(message.from_user.id, raw)
     user = await user_repo.get_by_user_id(message.from_user.id)
-    if not await _open_venue_city_choice(message, state, session, user):
+    if not user:
         await state.clear()
-        await message.answer("Город сохранён, но активных заданий пока нет.", reply_markup=main_menu())
+        return
+    rows = await _build_platform_rows_for_user(session, user, message.from_user.id)
+    if not rows:
+        await message.answer(
+            "Сейчас нет доступных заданий для выбранного города и вашего профиля.\n"
+            "Попробуйте другой город чуть крупнее или зайдите позже.",
+            reply_markup=main_menu(),
+        )
+        await state.clear()
+        return
+    await state.set_state(UserFSM.choosing_platform)
+    await message.answer(
+        "↓ Доступные платформы для заданий\n❗ Недоступно = нет заданий или недавно выполняли\n♻️ Выберите платформу для работы",
+        reply_markup=_platforms_kb_with_prices(rows),
+    )
 
 
 @router.callback_query(F.data.startswith("taskvenue:"))
@@ -412,17 +557,9 @@ async def pick_task_venue(cb: CallbackQuery, state: FSMContext, **data):
 @router.callback_query(F.data.in_(["back_task_venue", "secacc:back_platforms"]))
 async def back_task_venue(cb: CallbackQuery, state: FSMContext, **data):
     await cb.answer()
-    session = data["session"]
-    user_repo = UserRepository(session)
-    user = await user_repo.get_by_user_id(cb.from_user.id)
-    if not user:
-        await state.clear()
-        await cb.message.answer("Нажмите /start.", reply_markup=main_menu())
-        return
     await state.update_data(secacc_offer_platform=None, secacc_platform=None, selected_venue_city=None)
-    if not await _open_venue_city_choice(cb.message, state, session, user):
-        await state.clear()
-        await cb.message.answer("Нет доступных заданий.", reply_markup=main_menu())
+    await state.set_state(UserFSM.choosing_city)
+    await cb.message.answer("🗺 Напишите ваш город, чтобы подобрать ближайшие задания.")
 
 
 @router.message(UserFSM.choosing_venue_city, F.text)
@@ -436,7 +573,7 @@ async def remind_pick_venue_by_button(message: Message, **data):
 async def remind_pick_platform_by_button(message: Message, **data):
     if (message.text or "").strip() in MAIN_MENU_TEXTS:
         return
-    await message.answer("Выберите платформу кнопкой или «◀ Выбор города».")
+    await message.answer("Выберите платформу кнопкой ниже.")
 
 
 @router.callback_query(F.data.startswith("platform:"))
@@ -448,13 +585,11 @@ async def choose_platform(cb: CallbackQuery, state: FSMContext, **data):
     attempt_repo = AttemptRepository(session)
     user = await user_repo.get_by_user_id(cb.from_user.id)
     platform = cb.data.split(":", 1)[1]
-    d = await state.get_data()
-    sel = d.get("selected_venue_city")
-    if sel is None:
-        await cb.message.answer("Сначала выберите город. Нажмите «✍️ Приступить к заданию».")
+    if not user or not (user.city or "").strip():
+        await cb.message.answer("Сначала укажите город. Нажмите «✍️ Приступить к заданию».")
         return
-    venue_for_query = None if sel == TASK_VENUE_EMPTY else sel
-    all_tasks = await task_repo.get_active_for_venue_platform(venue_for_query, platform, user.city if user else None)
+    all_tasks = await _get_nearest_tasks_for_platform(session, user, platform)
+    all_tasks = [t for t in all_tasks if _task_matches_gender(getattr(t, "allowed_gender", "any"), user.account_gender)]
     if not all_tasks:
         await cb.message.answer("По этой платформе нет активных заданий.")
         return
@@ -464,9 +599,9 @@ async def choose_platform(cb: CallbackQuery, state: FSMContext, **data):
     has_unlock = bool(unlock_map.get(platform))
 
     if has_unlock:
-        available = sorted(all_tasks, key=lambda t: t.id)
+        available = list(all_tasks)
     else:
-        available = sorted([t for t in all_tasks if t.id not in completed_ids], key=lambda t: t.id)
+        available = [t for t in all_tasks if t.id not in completed_ids]
 
     if not available:
         await state.update_data(secacc_offer_platform=platform)
@@ -584,6 +719,11 @@ async def start_task(cb: CallbackQuery, state: FSMContext, **data):
         await cb.message.answer("Задание недоступно.")
         return
 
+    user = await user_repo.get_by_user_id(cb.from_user.id)
+    if user and not _task_matches_gender(getattr(task, "allowed_gender", "any"), getattr(user, "account_gender", "any")):
+        await cb.message.answer("Это задание недоступно для выбранного пола аккаунта. Выберите другое.")
+        return
+
     completed_ids = await attempt_repo.completed_task_item_ids(cb.from_user.id)
     unlock_map = await user_repo.get_repeat_unlock_map(cb.from_user.id)
     if task_id in completed_ids and not unlock_map.get(task.platform):
@@ -602,32 +742,56 @@ async def start_task(cb: CallbackQuery, state: FSMContext, **data):
             await cb.message.answer("По этому заданию отзыв уже отправлен на проверку. Ожидайте решения администратора.")
             return
         if active.status == "approved":
-            await state.set_state(UserFSM.waiting_review_screenshot)
-            await state.update_data(attempt_id=active.id)
-            venue_link = (getattr(task, "venue_link", None) or "").strip()
-            venue_line = f"\n🔗 Ссылка: {venue_link}\n" if venue_link else "\n"
-            await cb.message.answer(
-                f"✅ Вы допущены! Ваша инструкция: {task.instruction_url}\n"
-                f"{venue_line}\n"
-                "✍️ Этап 2/3: Опубликуйте отзыв по инструкции и пришлите сюда скриншот готового отзыва.\n\n"
-                "❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
-            )
+            if (getattr(active, "profile_login", None) or "").strip():
+                await state.set_state(UserFSM.waiting_review_screenshot)
+                await state.update_data(attempt_id=active.id)
+                await cb.message.answer(
+                    "🔜 Следующий этап — НАПИСАНИЕ ОТЗЫВА\n"
+                    "✍🏻 Напишите отзыв и отправьте скриншот отзыва боту."
+                )
+            else:
+                await state.set_state(UserFSM.waiting_profile_login)
+                await state.update_data(attempt_id=active.id)
+                await cb.message.answer("✍🏻 Напишите свой логин из профиля аккаунта на выбранной платформе.")
             return
         if active.status in ("login_screenshot", "waiting_approval"):
-            await state.set_state(UserFSM.waiting_account_screenshot)
+            await state.set_state(UserFSM.waiting_profile_login)
             await state.update_data(attempt_id=active.id)
-            await cb.message.answer(
-                "По этому заданию попытка уже начата: пришлите скрин профиля (этап 1) или дождитесь ответа модератора."
-            )
+            await cb.message.answer("✍🏻 Напишите свой логин из профиля аккаунта на выбранной платформе.")
             return
 
     attempt = await attempt_repo.create(cb.from_user.id, task_id)
+    await attempt_repo.approve(attempt.id)
     await user_repo.set_last_started_task_for_platform(cb.from_user.id, task.platform, task_id)
-    await state.set_state(UserFSM.waiting_account_screenshot)
+    await state.set_state(UserFSM.waiting_profile_login)
     await state.update_data(attempt_id=attempt.id)
     await cb.message.answer(
-        f"🔍 Этап 1/3: Для допуска к заданию пришлите скриншот вашего профиля на {task.platform}, "
-        "где видно ваш никнейм и дату последнего отзыва."
+        "⚙️ Ознакомьтесь с инструкцией и приступайте к работе 👇\n\n"
+        f"{task.instruction_url}\n\n"
+        "⏰ На выполнение и отправку скриншота отзыва есть 1 час.\n"
+        "✍🏻 Шаг 1: Напишите свой логин из профиля аккаунта на платформе."
+    )
+
+
+@router.message(UserFSM.waiting_profile_login, F.text)
+async def got_profile_login(message: Message, state: FSMContext, **data):
+    login = (message.text or "").strip()
+    if len(login) < 2:
+        await message.answer("Логин слишком короткий. Отправьте логин из профиля (минимум 2 символа).")
+        return
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    attempt_id = (await state.get_data()).get("attempt_id")
+    attempt = await attempt_repo.get_by_id(attempt_id)
+    if not attempt or attempt.user_id != message.from_user.id:
+        await state.clear()
+        return
+    await attempt_repo.set_profile_login(attempt.id, login)
+    await state.set_state(UserFSM.waiting_review_screenshot)
+    await state.update_data(attempt_id=attempt.id)
+    await message.answer(
+        "🔜 Следующий этап — НАПИСАНИЕ ОТЗЫВА\n"
+        "✍🏻 Напишите отзыв и отправьте скриншот отзыва боту."
     )
 
 
@@ -763,6 +927,7 @@ async def _cabinet_summary_text(session, user_id: int) -> str:
     return (
         f"Ваш ID: {user.user_id}\n"
         f"Username: @{user.username or '-'}\n"
+        f"Пол аккаунта: {_gender_label(getattr(user, 'account_gender', 'any'))}\n"
         f"Баланс: {float(user.balance):.2f} руб.\n"
         f"Выполнено заданий: {completed}\n\n"
         f"Реквизиты для выплат по заданиям:\n{pr_line}"
@@ -1046,12 +1211,16 @@ async def to_menu(cb: CallbackQuery, state: FSMContext):
 
 @router.message(UserFSM.waiting_account_screenshot)
 @router.message(UserFSM.waiting_review_screenshot)
+@router.message(UserFSM.waiting_profile_login)
 @router.message(UserFSM.waiting_second_account_screenshot)
 @router.message(UserFSM.waiting_profile_requisites)
 async def wrong_input_task_flow(message: Message, state: FSMContext):
     st = await state.get_state()
     if st == UserFSM.waiting_profile_requisites.state:
         await message.answer("Пришлите реквизиты текстом одним сообщением.")
+        return
+    if st == UserFSM.waiting_profile_login.state:
+        await message.answer("Пришлите логин профиля текстом (без фото).")
         return
     if st == UserFSM.waiting_second_account_screenshot.state:
         await message.answer("Пришлите скриншот профиля второго аккаунта одним фото.")

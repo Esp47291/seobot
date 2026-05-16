@@ -2,6 +2,7 @@
 """Конфигурация бота через переменные окружения."""
 import os
 from typing import Optional
+from datetime import datetime
 
 from environs import Env
 
@@ -120,3 +121,19 @@ SCHEDULER_INTERVAL_MINUTES: int = env.int("SCHEDULER_INTERVAL_MINUTES", 60)
 EXECUTOR_REMINDER_INTERVAL_MINUTES: int = env.int("EXECUTOR_REMINDER_INTERVAL_MINUTES", 5)
 # Версия для админ-команды «статус» (задайте в .env при релизе)
 APP_VERSION: str = env.str("APP_VERSION", "dev")
+
+# v2: приветственный бонус новым пользователям
+WELCOME_BONUS_AMOUNT: int = env.int("WELCOME_BONUS_AMOUNT", 20)
+# Дата старта начисления бонуса (МСК условно, формат YYYY-MM-DD)
+WELCOME_BONUS_START_DATE: str = env.str("WELCOME_BONUS_START_DATE", "2026-05-16")
+
+# Через сколько минут закрывать попытку, если исполнитель не отправил скрин отзыва.
+TASK_EXECUTION_TIMEOUT_MINUTES: int = env.int("TASK_EXECUTION_TIMEOUT_MINUTES", 60)
+
+
+def welcome_bonus_start_datetime_utc() -> datetime:
+    try:
+        d = datetime.strptime(WELCOME_BONUS_START_DATE.strip(), "%Y-%m-%d")
+    except Exception:
+        d = datetime(2026, 5, 16)
+    return d

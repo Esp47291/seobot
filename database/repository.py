@@ -8,7 +8,7 @@ from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from config import DEFAULT_MIN_WITHDRAW, MANAGER_IDS, REVIEW_REMINDER_AFTER_MINUTES
+from config import DEFAULT_MIN_WITHDRAW, MANAGER_IDS, REVIEW_REMINDER_AFTER_MINUTES, TASK_EXECUTION_TIMEOUT_MINUTES
 from .models import (
     Attempt,
     BalanceOperation,
@@ -80,6 +80,18 @@ class UserRepository:
         user = await self.get_by_user_id(user_id)
         if user:
             user.city = city
+            await self.session.flush()
+
+    async def set_account_gender(self, user_id: int, gender: str) -> None:
+        user = await self.get_by_user_id(user_id)
+        if user:
+            user.account_gender = (gender or "any").strip()
+            await self.session.flush()
+
+    async def mark_welcome_bonus_credited(self, user_id: int) -> None:
+        user = await self.get_by_user_id(user_id)
+        if user:
+            user.welcome_bonus_credited = True
             await self.session.flush()
 
     async def set_profile_payout_requisites(self, user_id: int, text: str | None) -> None:
@@ -182,6 +194,28 @@ class TaskItemRepository:
         )
         return list(r.scalars().all())
 
+    async def get_platforms_with_min_price(self, user_profile_city: str | None) -> list[tuple[str, float]]:
+        result = await self.session.execute(
+            select(TaskItem.platform, func.min(TaskItem.price))
+            .where(TaskItem.is_active == True, _executor_sees_task_filter(user_profile_city))
+            .group_by(TaskItem.platform)
+            .order_by(TaskItem.platform)
+        )
+        return [(p, float(v or 0)) for p, v in result.all()]
+
+    async def get_active_for_platform(self, platform: str, user_profile_city: str | None) -> list[TaskItem]:
+        result = await self.session.execute(
+            select(TaskItem)
+            .where(
+                TaskItem.platform == platform,
+                TaskItem.is_active == True,
+                _executor_sees_task_filter(user_profile_city),
+            )
+            .order_by(TaskItem.id)
+        )
+        tasks = list(result.scalars().all())
+        return await self._filter_by_daily_issue_count(tasks)
+
     async def get_active_for_venue_platform(
         self, venue_city: str | None, platform: str, user_profile_city: str | None
     ) -> list[TaskItem]:
@@ -239,6 +273,7 @@ class TaskItemRepository:
         daily_issue_count: int | None = None,
         prebuilt_texts_json: str = "[]",
         created_by_user_id: int | None = None,
+        allowed_gender: str = "any",
     ) -> TaskItem:
         # Минимальная цена в зависимости от платформы
         settings = await SettingsRepository(self.session).get()
@@ -256,6 +291,7 @@ class TaskItemRepository:
             daily_issue_count=daily_issue_count,
             prebuilt_texts_json=prebuilt_texts_json,
             created_by_user_id=created_by_user_id,
+            allowed_gender=(allowed_gender or "any").strip(),
         )
         self.session.add(task)
         await self.session.flush()
@@ -366,6 +402,14 @@ class AttemptRepository:
     async def create(self, user_id: int, task_item_id: int) -> Attempt:
         attempt = Attempt(user_id=user_id, task_item_id=task_item_id, status="waiting_approval")
         self.session.add(attempt)
+        await self.session.flush()
+        return attempt
+
+    async def set_profile_login(self, attempt_id: int, profile_login: str) -> Attempt | None:
+        attempt = await self.get_by_id(attempt_id)
+        if not attempt:
+            return None
+        attempt.profile_login = (profile_login or "").strip()[:255]
         await self.session.flush()
         return attempt
 
@@ -488,6 +532,30 @@ class AttemptRepository:
             )
         )
         return list(result.scalars().all())
+
+    async def due_for_execution_timeout(self, timeout_minutes: int | None = None) -> list[Attempt]:
+        minutes = int(timeout_minutes or TASK_EXECUTION_TIMEOUT_MINUTES)
+        minutes = max(1, minutes)
+        border = datetime.utcnow() - timedelta(minutes=minutes)
+        result = await self.session.execute(
+            select(Attempt).where(
+                Attempt.status == "approved",
+                Attempt.review_screenshot_file_id.is_(None),
+                Attempt.created_at <= border,
+                Attempt.timeout_notified == False,
+            )
+        )
+        return list(result.scalars().all())
+
+    async def timeout_cancel(self, attempt_id: int, reason: str) -> Attempt | None:
+        attempt = await self.get_by_id(attempt_id)
+        if not attempt or attempt.status != "approved":
+            return None
+        attempt.status = "canceled"
+        attempt.decline_reason = reason
+        attempt.timeout_notified = True
+        await self.session.flush()
+        return attempt
 
     async def mark_review_check_requested(self, attempt_id: int) -> None:
         attempt = await self.get_by_id(attempt_id)

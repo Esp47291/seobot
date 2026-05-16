@@ -183,6 +183,7 @@ async def reviews_queue(cb: CallbackQuery, **data):
             f"🧾 Отзыв на подтверждении #{at.id}\n"
             f"Исполнитель: {uname}\n"
             f"Исполнитель ID: {at.user_id}\n"
+            f"Логин профиля: {(getattr(at, 'profile_login', None) or '—')}\n"
             f"Дата отправки скрина: {submitted_line}\n"
             f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
             f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб."
@@ -245,6 +246,7 @@ async def reviews_passed(cb: CallbackQuery, **data):
             f"✅ Прошедший отзыв (attempt) #{at.id}\n"
             f"Исполнитель: {uname}\n"
             f"Исполнитель ID: {at.user_id}\n"
+            f"Логин профиля: {(getattr(at, 'profile_login', None) or '—')}\n"
             f"Дата отправки скрина: {submitted_line}\n"
             f"Дата принятия: {completed_line}\n"
             f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip()}\n"
@@ -666,31 +668,41 @@ async def tasks_add_start(cb: CallbackQuery, state: FSMContext, **data):
     )
 
 
+def _task_gender_pick_kb():
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👨 Только мужские", callback_data="admin:tasks_gender:male")],
+            [InlineKeyboardButton(text="👩 Только женские", callback_data="admin:tasks_gender:female")],
+            [InlineKeyboardButton(text="👥 Без разницы", callback_data="admin:tasks_gender:any")],
+        ]
+    )
+
+
+async def _ask_task_gender(cb: CallbackQuery, state: FSMContext, platform: str) -> None:
+    await state.clear()
+    await state.update_data(platform=platform)
+    await state.set_state(AdminFSM.waiting_task_gender)
+    await cb.message.answer("Шаг 1.5/8.\nКакие аккаунты могут выполнять это задание?", reply_markup=_task_gender_pick_kb())
+
+
 @router.callback_query(F.data == "admin:tasks_plat:yandex")
 async def tasks_plat_yandex(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.clear()
-    await state.set_state(AdminFSM.waiting_task_price)
-    await state.update_data(platform="Яндекс карты")
-    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
+    await _ask_task_gender(cb, state, "Яндекс карты")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:2gis")
 async def tasks_plat_2gis(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.clear()
-    await state.set_state(AdminFSM.waiting_task_price)
-    await state.update_data(platform="2ГИС")
-    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
+    await _ask_task_gender(cb, state, "2ГИС")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:google")
 async def tasks_plat_google(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.clear()
-    await state.set_state(AdminFSM.waiting_task_price)
-    await state.update_data(platform="Google карты")
-    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
+    await _ask_task_gender(cb, state, "Google карты")
 
 
 @router.callback_query(F.data == "admin:tasks_plat:other")
@@ -708,8 +720,20 @@ async def tasks_add_platform(message: Message, state: FSMContext, **data):
         await message.answer("Отменено.", reply_markup=admin_main())
         return
     await state.update_data(platform=message.text.strip())
+    await state.set_state(AdminFSM.waiting_task_gender)
+    await message.answer("Шаг 1.5/8.\nКакие аккаунты могут выполнять это задание?", reply_markup=_task_gender_pick_kb())
+
+
+@router.callback_query(AdminFSM.waiting_task_gender, F.data.startswith("admin:tasks_gender:"))
+async def tasks_pick_gender(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    gender = cb.data.split(":")[-1]
+    if gender not in {"any", "male", "female"}:
+        await cb.message.answer("Некорректный выбор пола.")
+        return
+    await state.update_data(allowed_gender=gender)
     await state.set_state(AdminFSM.waiting_task_price)
-    await message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.message(AdminFSM.waiting_task_price, F.text)
@@ -1066,6 +1090,7 @@ async def tasks_add_venue_link(message: Message, state: FSMContext, **data):
     venue_url = message.text.strip()
     venue_city = (d.get("venue_city") or "").strip()
     task_sphere = (d.get("task_sphere") or "").strip()
+    allowed_gender = (d.get("allowed_gender") or "any").strip()
 
     if not platform:
         await state.clear()
@@ -1101,6 +1126,7 @@ async def tasks_add_venue_link(message: Message, state: FSMContext, **data):
         instruction_url=f"{instruction_text}\n\nСсылка на заведение для отзыва: {venue_url}",
         daily_issue_count=int(daily_issue_count),
         prebuilt_texts_json=json.dumps(prebuilt_texts, ensure_ascii=False),
+        allowed_gender=allowed_gender,
     )
     await state.clear()
     await message.answer(

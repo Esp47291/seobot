@@ -14,12 +14,14 @@ async def notify_admins_review_screenshot_received(
     task_platform: str,
     task_sphere: str,
     task_price: float,
+    profile_login: str | None = None,
 ) -> None:
     uname = f"@{executor_username}" if executor_username else "(без username)"
     caption = (
         "✍️ Исполнитель написал отзыв и прислал скриншот публикации.\n"
         f"Исполнитель: {uname}\n"
         f"Telegram ID: {attempt_user_id}\n"
+        f"Логин профиля: {(profile_login or '—')}\n"
         f"Задание: {task_platform} / {task_sphere}\n"
         f"Цена: {task_price:.2f} руб.\n\n"
         f"Проверьте отзыв на площадке в течение {REVIEW_CHECK_DAYS} дней.\n"

@@ -47,7 +47,7 @@ def platforms_kb(platforms: list[str], *, show_back_venue: bool = False) -> Inli
 def task_card_kb(task_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Начать задание", callback_data=f"start_task:{task_id}")],
+            [InlineKeyboardButton(text="✅ Начать это задание", callback_data=f"start_task:{task_id}")],
             [InlineKeyboardButton(text="🔜 Следующее задание", callback_data=f"next_task:{task_id}")],
             [InlineKeyboardButton(text="🚫 Не интересно", callback_data=f"skip_task:{task_id}")],
             [InlineKeyboardButton(text="🔙 В главное меню", callback_data="to_menu")],
@@ -58,6 +58,14 @@ def task_card_kb(task_id: int) -> InlineKeyboardMarkup:
 def cancel_attempt_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🔙 Отменить и в меню", callback_data="cancel_attempt")]]
+    )
+
+
+def welcome_start_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Начать работу", callback_data="welcome:start_work")],
+        ]
     )
 
 

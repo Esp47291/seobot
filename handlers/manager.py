@@ -254,31 +254,39 @@ async def mgr_tasks_add_start(cb: CallbackQuery, state: FSMContext):
     )
 
 
+def _mgr_task_gender_pick_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👨 Только мужские", callback_data="mgr:tasks_gender:male")],
+            [InlineKeyboardButton(text="👩 Только женские", callback_data="mgr:tasks_gender:female")],
+            [InlineKeyboardButton(text="👥 Без разницы", callback_data="mgr:tasks_gender:any")],
+        ]
+    )
+
+
+async def _mgr_ask_task_gender(cb: CallbackQuery, state: FSMContext, platform: str) -> None:
+    await state.clear()
+    await state.update_data(platform=platform)
+    await state.set_state(ManagerFSM.waiting_task_gender)
+    await cb.message.answer("Шаг 1.5/8.\nКакие аккаунты могут выполнять это задание?", reply_markup=_mgr_task_gender_pick_kb())
+
+
 @router.callback_query(F.data == "mgr:tasks_plat:yandex")
 async def mgr_tasks_plat_yandex(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.clear()
-    await state.set_state(ManagerFSM.waiting_task_price)
-    await state.update_data(platform="Яндекс карты")
-    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
+    await _mgr_ask_task_gender(cb, state, "Яндекс карты")
 
 
 @router.callback_query(F.data == "mgr:tasks_plat:2gis")
 async def mgr_tasks_plat_2gis(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.clear()
-    await state.set_state(ManagerFSM.waiting_task_price)
-    await state.update_data(platform="2ГИС")
-    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
+    await _mgr_ask_task_gender(cb, state, "2ГИС")
 
 
 @router.callback_query(F.data == "mgr:tasks_plat:google")
 async def mgr_tasks_plat_google(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
-    await state.clear()
-    await state.set_state(ManagerFSM.waiting_task_price)
-    await state.update_data(platform="Google карты")
-    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
+    await _mgr_ask_task_gender(cb, state, "Google карты")
 
 
 @router.callback_query(F.data == "mgr:tasks_plat:other")
@@ -296,8 +304,20 @@ async def mgr_tasks_add_platform(message: Message, state: FSMContext, **data):
         await message.answer("Отменено.", reply_markup=manager_main())
         return
     await state.update_data(platform=message.text.strip())
+    await state.set_state(ManagerFSM.waiting_task_gender)
+    await message.answer("Шаг 1.5/8.\nКакие аккаунты могут выполнять это задание?", reply_markup=_mgr_task_gender_pick_kb())
+
+
+@router.callback_query(ManagerFSM.waiting_task_gender, F.data.startswith("mgr:tasks_gender:"))
+async def mgr_tasks_pick_gender(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    gender = cb.data.split(":")[-1]
+    if gender not in {"any", "male", "female"}:
+        await cb.message.answer("Некорректный выбор пола.")
+        return
+    await state.update_data(allowed_gender=gender)
     await state.set_state(ManagerFSM.waiting_task_price)
-    await message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
+    await cb.message.answer("Шаг 2/8.\nНапишите цену за отзыв (число). Например: 120")
 
 
 @router.message(ManagerFSM.waiting_task_price, F.text)
@@ -606,6 +626,7 @@ async def mgr_tasks_add_venue_link(message: Message, state: FSMContext, **data):
     venue_url = message.text.strip()
     venue_city = (d.get("venue_city") or "").strip()
     task_sphere = (d.get("task_sphere") or "").strip()
+    allowed_gender = (d.get("allowed_gender") or "any").strip()
 
     if not platform:
         await state.clear()
@@ -642,6 +663,7 @@ async def mgr_tasks_add_venue_link(message: Message, state: FSMContext, **data):
         daily_issue_count=int(daily_issue_count),
         prebuilt_texts_json=json.dumps(prebuilt_texts, ensure_ascii=False),
         created_by_user_id=message.from_user.id,
+        allowed_gender=allowed_gender,
     )
     await state.clear()
     await message.answer(
