@@ -495,6 +495,20 @@ class AttemptRepository:
             attempt.review_check_requested = True
             await self.session.flush()
 
+    async def list_user_review_history(self, user_id: int, *, limit: int = 30) -> list[Attempt]:
+        """Попытки, по которым исполнитель отправлял скрин отзыва на проверку."""
+        result = await self.session.execute(
+            select(Attempt)
+            .where(
+                Attempt.user_id == user_id,
+                Attempt.review_screenshot_file_id.isnot(None),
+                Attempt.status.in_(("review_submitted", "completed", "rejected")),
+            )
+            .order_by(Attempt.id.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     async def completed_count_by_user(self, user_id: int) -> int:
         result = await self.session.execute(
             select(func.count()).select_from(Attempt).where(Attempt.user_id == user_id, Attempt.status == "completed")
