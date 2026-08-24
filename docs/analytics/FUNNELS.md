@@ -88,6 +88,8 @@ Qualify (H4, руками в чате менеджера, пока нет CRM):
 
 Формула когда появится таблица: `take / biz_lead`, `live_task / take`. Не делить live на все лиды вместе с no_take — иначе «конверсия продаж» врёт.
 
+Исходы те же на **холодном** F5 (H6, нет `biz_lead`): знаменатель недели = `sent` (15 уникальных карточек), не «сделки». Смотреть `brief / replied` и доли take/no_take/hold после brief. Скидка, чтобы no_take стал take, ломает и F5, и CM1. Трекер: `docs/sales/ACQUISITION.md`.
+
 ## Операторские (ежедневно)
 
 - Очередь: count review_submitted + waiting_approval старше SLA (SLA ещё не задан — назначить).

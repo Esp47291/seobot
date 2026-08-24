@@ -2,7 +2,7 @@
 
 Очередь двигается каждый run. Не повторять один и тот же топ-5 без прогресса.
 
-## Сейчас (после 2026-08-24 H5)
+## Сейчас (после 2026-08-24 H6)
 
 | ID | Задача | P | Статус | Зачем |
 |---|---|---|---|---|
@@ -12,8 +12,8 @@
 | TECH-01 | FSM не в MemoryStorage | P0 | todo | деплой не убивает сдачу |
 | OPS-01 | Daily inbox: очередь модерации + WD pending + aged>24ч | P0 | todo | касса и SLA; SQL уже в FUNNELS |
 | COPY-01 | Правила без прокси-секрета и «накруточного» тона | P0 | todo | репутация + секрет в git |
-| UNIT-01 | Заполнить P_c и C_ops фактом с первого take-договора | P1 | spec-ready | формулы есть; ₽ в скрипте 9 запрещены до факта |
-| SALES-01 | 15 касаний ICP «локальная услуга» по скрипту 1 | P1 | next-hour field | проверка оффера; спека скриптов готова |
+| SALES-01 | 15 касаний ICP «локальная услуга» по скрипту 1 | P1 | **field** — протокол в ACQUISITION | проверка оффера; no_take не проигрыш |
+| UNIT-01 | Заполнить P_c и C_ops фактом с первого take-договора | P1 | spec-ready | ждёт take + договор; ₽ в скрипте 9 запрещены |
 | WEB-01 | Собрать `/` по LANDING_BRIEF (Tilda ок) | P1 | spec-ready | герой+форма+IA готовы; вёрстка — день |
 | AN-01 | 3 лога start/task_take/proof_submit | P1 | spec-ready | карта в EVENT_TAXONOMY; код — дневной PR |
 | UX-05 | Статус заявки на вывод в кабинете | P1 | queued | доверие к деньгам |
@@ -33,6 +33,7 @@
 - H3: лендинг 1 CTA, форма 3 поля, IA без кабинета
 - H4: бриф ↔ `#lead`, qualifiers, inbound, stuffing, no canned text
 - H5: CM1 vs take-rate; no_take ≠ маржа; полы ≠ SKU; WD нефондирован без P_c
+- H6: протокол 15, supply-first город, трекер исходов, партнёр ≠ ranking SKU
 
 ## Ротация часов
 
@@ -40,9 +41,9 @@ H1 Product/UX
 H2 Analytics events  
 H3 Website landing  
 H4 Sales scripts  
-H5 Unit economics ← **этот run**  
-H6 Acquisition ← **следующий**  
-H7 Copy system  
+H5 Unit economics  
+H6 Acquisition ← **этот run**  
+H7 Copy system ← **следующий**  
 H8 Risks&ops  
 
-Углублять, не переписывать скелет. H6: каналы + недельный тест; не ставить P_c в ₽ в ACQUISITION; 15 касаний = скрипт 1 без ссылки, no_take не считать «непродажей».
+Углублять, не переписывать скелет. H7: COPY_SYSTEM + правила без секрета/накрутки; не переписывать ACQUISITION / UNIT / SCRIPTS / LANDING с нуля.

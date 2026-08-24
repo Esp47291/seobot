@@ -4,7 +4,7 @@
 
 | Неделя | Продукт | Продажи | Контент | Метрики |
 |---|---|---|---|---|
-| 1 | /start 2 роли + ТЗ на карточке + SLA-текст (медиана или «рабочие часы»). Не рефакторить всё | 15 outbound локальным услугам по картам города-пилота | 3 поста в Jobinsidenews: правила, как сдают, что не обещаем | SQL: new users, takes, submits, pass%, WD pending |
+| 1 | /start 2 роли + ТЗ на карточке + SLA-текст (медиана или «рабочие часы»). Не рефакторить всё | 15 outbound ICP «1 точка», один город со supply; трекер take/no_take/hold; 0 URL в 1-м DM | 3 поста в Jobinsidenews: правила, как сдают, что не обещаем | SQL: new users, takes, submits, pass%, WD pending. Продажи: sent/replied/brief, не ₽ |
 | 2 | Статус вывода в кабинете. Черновик события start/take/submit хотя бы в лог | Follow-up тем 15 + 10 новых. 1 созвон-бриф | Собрать `/` по LANDING_BRIEF (Tilda ок): 1 CTA, форма 3 поля, без кабинета | Time-to-moderation p50 |
 | 3 | Redis/DB FSM если деплой уже жжёт. Сегмент broadcast по городу | Оффер из OFFERS только take; P после UNIT-01 (договор). no_take не «дешёвый пилот» | Кейс процесса (без фейковых звёзд) | CM1 пилота: P_c, P_ex, доля ref, WD pending |
 | 4 | Event taxonomy минимум 8 событий | Повтор пилота / отказ-разбор | FAQ на сайт | D7 return хоть на SQL proxy |

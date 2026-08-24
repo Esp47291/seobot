@@ -1,3 +1,11 @@
+## 2026-08-24 ~04:51 UTC — H6 Acquisition
+
+| Дата | Тема | URL | Что взяли для Job Inside |
+|---|---|---|---|
+| 2026-08-24 | Холод: ссылка в 1-м письме не поднимает ответ; цель касания — ответ, не close | https://www.jollymarketer.com/en/cold-outreach-handbook-2025/ | Скрипт 1 без URL подтверждаем. Чужой reply 5–10% **не** ставить целью на 15 Telegram-DM |
+| 2026-08-24 | Каденс: первое письмо = разговор; ответы классифицировать (интерес / не сейчас / отказ), не «открыто» | https://alchemail.io/blog/b2b-outbound-sales-guide | take/no_take/hold/mute. Email «4–7 писем» не копировать в TG — у нас 3 касания max |
+| 2026-08-24 | Агентства покупают local SEO fulfillment (карточка, цитаты, review program), не полевой QA | https://almcorp.com/blog/white-label-local-seo-services/ | Партнёрка нед. 3 = слой слот+проверка+отчёт. Чужие $/мес за точку не наши. Стоп, если просят генерацию отзывов как SEO |
+
 ## 2026-08-24 ~03:49 UTC — H5 Unit economics
 
 | Дата | Тема | URL | Что взяли для Job Inside |
