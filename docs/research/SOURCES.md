@@ -12,6 +12,14 @@ Append-only. Каждый run — 1–3 ссылки с датой и зачем
 | 2026-08-24 | Marketplace T&S: SLA, audit trail, retention после модерации | https://gruv.ai/blog/trust-safety-program-contractor-marketplace | SLA по severity, не один срок на всё; каждое решение = case id + причина + уведомление; мерить 30d retention прошедших/отклонённых |
 | 2026-08-24 | Marketplace playbook: очередь по риску, видимый SLA | https://techvinta.com/blog/marketplace-trust-and-safety-playbook | Новички всегда в ручную очередь; обе стороны видят таймер; автоматизация триит, не судит |
 
+## 2026-08-24 ~01:49 UTC — H3 Website landing
+
+| Дата | Тема | URL | Что взяли для Job Inside |
+|---|---|---|---|
+| 2026-08-24 | B2B LP: один оффер, одна аудитория, одно действие; форма по ценности | https://www.mqlmagnet.com/post/landing-page-best-practices-that-actually-convert | Герой `/` только бизнес; «Открыть бота» убрать из первого вьюпорта |
+| 2026-08-24 | Сервисный LP: 3 поля, CTA в первом экране, proof без подвала | https://endigita.com/blog/landing-page-optimization-service-business-2026 | Форма: имя / город / Telegram; на mobile кнопка → `#lead`, не 6 полей |
+| 2026-08-24 | GBP: честное представление бизнеса, без трюков в названии/оффере | https://support.google.com/business/answer/3038177?hl=en | На сайте не продавать отзыв как товар и не маскироваться под «партнёра площадки» |
+
 ## 2026-08-24 ~00:53 UTC — H2 Analytics events
 
 | Дата | Тема | URL | Что взяли для Job Inside |
