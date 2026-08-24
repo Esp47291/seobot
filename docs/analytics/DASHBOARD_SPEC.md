@@ -50,6 +50,7 @@
 - `referral_payout_ops_total` как «стоимость рефералки».
 - `tasks_completed` lifetime как «сегодня сделали».
 - CSV completed как воронка (там нет take/fail/view).
+- `SUM(task_items.price)` как GMV/выручку — это P_ex (COGS). Выручки нет, пока нет P_c.
 
 ## MIRO-READY
 

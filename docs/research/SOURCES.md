@@ -1,6 +1,10 @@
-# Источники research
+## 2026-08-24 ~03:49 UTC — H5 Unit economics
 
-Append-only. Каждый run — 1–3 ссылки с датой и зачем взяли.
+| Дата | Тема | URL | Что взяли для Job Inside |
+|---|---|---|---|
+| 2026-08-24 | GMV ≠ revenue; take rate ≠ contribution; отрицательный CM × объём = ускорение убытка | https://www.lowcode.agency/blog/marketplace-unit-economics-gmv-explained | Не называть SUM(price) выручкой; считать CM1 после P_ex+ref+ops |
+| 2026-08-24 | Headline take врёт: между % и маржой — процессинг, T&S, фрод | https://www.internetmango.com/insights/take-rate-marketplace-decision | (P_c−P_ex)/P_c не health-метрика: сверху 0–25% ref |
+| 2026-08-24 | Сбор с demand и выплата supply — разные шкалы; sale ≠ payout-ready | https://gruv.ai/blog/accounts-receivable-cycle-marketplaces-buyer-payments-seller-disbursement | WD до оплаты клиента = нефондировано; не ускорять кассу ради supply |
 
 ## 2026-08-24 ~00:30 UTC — H1 Product/UX
 

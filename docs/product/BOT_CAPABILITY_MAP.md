@@ -76,6 +76,13 @@ Master-пайплайн короче и другой: обучение → ра�
 | Онбординг | Welcome + rules dump | Нет сегментации | /start: «Хочу задания» / «Я бизнес» |
 | Сайт | Нет | Нет B2B входа | LANDING_BRIEF |
 
+## Инкремент аудита 2026-08-24 H5 (~03:49 UTC)
+
+- `origin/patch-15` HEAD всё ещё `a768bf3`. Зоны выплат / рефералка / FSM / сайт без изменения кода.
+- Деньги: `TaskItem.price` = P_ex (floor default 130/35/12). Сущности счёта/P_c нет. Реферал 20%+5% в `grant_task_completion_rewards` после админ-`review_ok` или `mgr_outpay`.
+- Касса: WD ручной; `completed` ≠ credited на менеджерских слотах. Это не take-rate GMV.
+- Сайта нет. Код бота не меняли.
+
 ## Инкремент аудита 2026-08-24 H4 (~02:51 UTC)
 
 - `origin/patch-15` HEAD всё ещё `a768bf3`. Зоны выплат / модерация / FSM / channel gate / CSV без изменения кода.
