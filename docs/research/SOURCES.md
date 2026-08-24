@@ -1,3 +1,14 @@
+## 2026-08-24 ~06:52 UTC — H8 Risks&ops
+
+| Дата | Тема | URL | Что взяли для Job Inside |
+|---|---|---|---|
+| 2026-08-24 | Очереди, не красные цифры: owner, priority, timestamp, next action, escalation | https://appclonelabs.com/blog/marketplace-mvp-admin-panel-scope | Хаб ≠ inbox. 5 полос с aged и следующим действием |
+| 2026-08-24 | Admin: очереди aged by wait, payout pipeline отдельно, один SLA на спор — мало | https://www.lowcode.agency/blog/admin-panel-design-for-marketplace-platforms | Q4 ₽ отдельно от Q2; S0–S5 вместо «все за 24ч» |
+| 2026-08-24 | T&S: SLA по severity; audit trail; больше friction на payout, чем на профиль | https://gruv.ai/blog/trust-safety-program-contractor-marketplace | S4 hold первого WD; не ускорять кассу ради supply |
+| 2026-08-24 | Новички всегда в ручную очередь; видимый таймер обеим сторонам | https://techvinta.com/blog/marketplace-trust-and-safety-playbook | Q3 новичок руками; UX-03 ETA из рабочих часов, не фейк 5 мин |
+| 2026-08-24 | Maps UGC: incentive запрещён; апр. 2026 — квоты сбора и диктовка содержания | https://support.google.com/contributionpolicy/answer/7400114 | Prebuilt allow = rating manipulation, не копирайт. Стоп слотов при претензии, не «другой шаблон» |
+| 2026-08-24 | Апр. 2026: staff quotas + specific content в solicit = manipulation | https://ppc.land/google-tightens-maps-review-policy-staff-names-and-quotas-now-banned/ | Не квотировать исполнителей «N отзывов/день» в канале |
+
 ## 2026-08-24 ~05:51 UTC — H7 Copy system
 
 | Дата | Тема | URL | Что взяли для Job Inside |

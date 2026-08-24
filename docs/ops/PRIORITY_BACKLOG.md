@@ -2,15 +2,15 @@
 
 Очередь двигается каждый run. Не повторять один и тот же топ-5 без прогресса.
 
-## Сейчас (после 2026-08-24 H7)
+## Сейчас (после 2026-08-24 H8)
 
 | ID | Задача | P | Статус | Зачем |
 |---|---|---|---|---|
+| OPS-01 | Daily inbox: 5 полос + aged + WD ₽ + Q5 | P0 | **spec-ready** — ритуал руками; хаб днём | касса и SLA; SQL в DAILY_INBOX |
 | UX-01 | /start: исполнитель vs бизнес | P0 | todo — тексты H7 готовы | 10 секунд понимания |
 | UX-02 | Инструкция/чеклист на карточке до take | P0 | todo | меньше слепых сдач |
-| UX-03 | Текст после скрина: статус + честный ETA; не «оплачен» до credited | P0 | todo — формулировки C-04/C-05 | удержание + честные деньги |
-| TECH-01 | FSM не в MemoryStorage | P0 | todo | деплой не убивает сдачу |
-| OPS-01 | Daily inbox: очередь модерации + WD pending + aged>24ч | P0 | todo | касса и SLA; SQL уже в FUNNELS |
+| UX-03 | Текст после скрина: статус + честный ETA; не «оплачен» до credited | P0 | todo — ETA = S2 рабочие часы | удержание + честные деньги |
+| TECH-01 | FSM не в MemoryStorage | P0 | todo — до фикса deploy freeze | деплой не убивает сдачу |
 | COPY-01 | Правила без прокси-секрета; реф без пассава; стоп prebuilt исполнителю | P0 | **spec-ready** | репутация + ToS; секрет не в docs |
 | SALES-01 | 15 касаний ICP «локальная услуга» по скрипту 1 | P1 | **field** — протокол в ACQUISITION | проверка оффера; no_take не проигрыш |
 | UNIT-01 | Заполнить P_c и C_ops фактом с первого take-договора | P1 | spec-ready | ждёт take + договор; ₽ в скрипте 9 запрещены |
@@ -18,7 +18,7 @@
 | AN-01 | 3 лога start/task_take/proof_submit | P1 | spec-ready | карта в EVENT_TAXONOMY; код — дневной PR |
 | UX-05 | Статус заявки на вывод в кабинете | P1 | queued | доверие к деньгам |
 | AN-02 | Таблица analytics_events + остальные 9 событий | P1 | queued | после недели Phase 1 |
-| AN-03 | Daily-срезы в admin stats (не lifetime) | P1 | queued | DASHBOARD_SPEC SQL |
+| AN-03 | Daily-срезы в admin stats (не lifetime) | P1 | queued | DASHBOARD_SPEC + хаб Q1/Q5 |
 | WEB-02 | Домен + UTM + приём `biz_lead` в таблицу/менеджеру | P1 | queued | иначе форма и скрипт 13 в никуда |
 | UX-06 | Пустое состояние «напомнить по городу» | P2 | later — текст H7 есть | |
 | REF-01 | Счётчик qualified рефералов | P2 | later | |
@@ -35,6 +35,7 @@
 - H5: CM1 vs take-rate; no_take ≠ маржа; полы ≠ SKU; WD нефондирован без P_c
 - H6: протокол 15, supply-first город, трекер исходов, партнёр ≠ ranking SKU
 - H7: инвентарь C-01…C-16; RULES без секрета; стоп диктовки исполнителю; тон канала = скрипт 1
+- H8: inbox 5 полос; хаб admission врёт; Q5 нет в хабе; severity; инциденты I1–I4
 
 ## Ротация часов
 
@@ -44,7 +45,7 @@ H3 Website landing
 H4 Sales scripts  
 H5 Unit economics  
 H6 Acquisition  
-H7 Copy system ← **этот run**  
-H8 Risks&ops ← **следующий**  
+H7 Copy system  
+H8 Risks&ops ← **этот run**  
 
-Углублять, не переписывать скелет. H8: RISKS + OPS-01 inbox; не переписывать COPY / ACQUISITION / UNIT с нуля. Не копировать секрет из rules.py.
+Следующий: повтор круга, **H1 Product/UX** углубление (UX-03 ← S2 inbox). Не переписывать скелет. Не копировать секрет из rules.py.

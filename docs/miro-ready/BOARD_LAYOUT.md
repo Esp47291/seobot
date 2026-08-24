@@ -15,7 +15,8 @@
 [7b. Acquisition] каналы × ICP + трекер 15 + исходы qualify
 [8. 30 days] недели 1–4
 [9. Risks] ToS / фрод / касса / FSM / prebuilt-диктовка
-[10. Sources] research (H1–H7)
+[9b. Ops inbox] 5 полос Q1–Q5 + severity S0–S5 + ритуал 8 шагов (DAILY_INBOX)
+[10. Sources] research (H1–H8)
 ```
 
 Цвета фреймов (к VISUAL_DIRECTION): фон тёмный, акценты латунь = P0, мох = сделано.
@@ -43,3 +44,5 @@
 Карточки на фрейм 7b (H6): «15 × скрипт 1, 0 URL»; «город = supply first»; «sent→brief→take/no_take/hold»; «no_take не KPI-проигрыш»; «не затыкать слоты серым»; «партнёр ≠ local SEO ranking»; «чужой reply% почты не наш».
 
 Карточки на фрейм 2 / 2b (H7): «правила ≠ оффер+прокси»; «две роли на /start»; «accepted ≠ оплачен»; «WD paid = сумма+остаток»; «реферал не пассив»; «не слать prebuilt текст»; «канал = скрипт 1».
+
+Карточки на фрейм 9 / 9b (H8): «хаб admission ≠ очередь (нет login_screenshot)»; «очереди id DESC прячут stale»; «Q5 mgr unpaid нет в хабе»; «WD ₽ только в extras»; «один SLA врёт — S0…S5»; «не allow с prebuilt»; «deploy freeze при живом FSM»; «нефондированный WD не ускорять».

@@ -32,7 +32,9 @@
 
 ## Следующий gap после UX (очередь часов)
 
-H7 (этот run): COPY-01 spec-ready — инвентарь C-01…C-16. Код не писали. Prebuilt исполнителю = gap ToS, не «копирайт».
+H8: OPS-01 spec-ready — ритуал 5 полос, хаб ≠ очередь. Код не писали. Prebuilt allow = ToS.
+
+H7 (пред.): COPY-01 spec-ready — инвентарь C-01…C-16. Prebuilt исполнителю = gap ToS, не «копирайт».
 
 Дописка H2: админ-хаб ≠ воронка; `completed` менеджера ≠ выплата; COUNT реф-операций ≠ ref cost.
 
@@ -48,3 +50,4 @@ H7 (этот run): COPY-01 spec-ready — инвентарь C-01…C-16. Код
 | UX-06 | Event taxonomy | P1 | analytics | Phase 1: 3 лога start/take/submit; Phase 2: 12 из ТЗ |
 | UX-07 | Лендинг B2B | P1 | website | 1 оффер + CTA |
 | COPY-01 | Правила/реф/деньги/prebuilt | P0 | product | RULES без секрета; не «оплачен» до credited; не слать диктовку |
+| OPS-01 | Daily inbox 5 полос | P0 | ops | Ритуал+SQL сегодня; хаб: admission=оба статуса, aged, WD ₽, Q5 |

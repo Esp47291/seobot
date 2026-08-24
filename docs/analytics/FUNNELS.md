@@ -186,6 +186,26 @@ WHERE status='review_submitted'
   AND submitted_at < datetime('now','-1 day');
 ```
 
+**Inbox lanes (H8) — полный ритуал в `docs/ops/DAILY_INBOX.md`.** Хаб `admission` считает только `waiting_approval`; живая очередь допуска ещё `login_screenshot`. Q5 (mgr unpaid) в хабе нет.
+
+```sql
+-- Q1: хаб vs очередь допуска
+SELECT
+  SUM(CASE WHEN status='waiting_approval' THEN 1 ELSE 0 END) AS hub_admission,
+  SUM(CASE WHEN status='login_screenshot' THEN 1 ELSE 0 END) AS missing_from_hub
+FROM attempts;
+
+-- Q5: completed менеджера без credited (не выручка, это P_ex)
+SELECT COUNT(*), ROUND(SUM(t.price),2)
+FROM attempts a JOIN task_items t ON t.id=a.task_item_id
+WHERE a.status='completed' AND a.balance_credited=0
+  AND t.created_by_user_id IS NOT NULL;
+
+-- stuffing inventory
+SELECT COUNT(*) FROM task_items
+WHERE is_active=1 AND TRIM(COALESCE(prebuilt_texts_json,'')) NOT IN ('[]','');
+```
+
 ## MIRO-READY
 
 | Воронка | Шаги | Ключевая конверсия | Источник факта |

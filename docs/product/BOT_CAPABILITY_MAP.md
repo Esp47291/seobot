@@ -1,6 +1,6 @@
 # Job Inside — карта возможностей бота
 
-Аудит: 2026-08-24 00:23 UTC, дописки H2–H7.  
+Аудит: 2026-08-24 00:23 UTC, дописки H2–H8.  
 Два снимка кода: `origin/master` (эта рабочая копия) и `origin/patch-15` (продукт-of-record: роли, баланс, рефералка, scheduler, аналитика).  
 Сайта нет ни на одной ветке.
 
@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | Выплаты / баланс / вывод | Нет баланса. Реквизиты на каждое задание. Админ жмёт «Выплачено» на Task | Есть `balance`, `WithdrawalRequest`, кабинет, мин. вывод (default 20, `BotSetting.min_withdraw_amount`). Выплаты ручные | **P0 опер.** Ручной контур не масштабируется; нет SLA «деньги уйдут до…» | Код: `handlers/user.py` withdraw_*, `services/task_payout.py` |
 | Рефералка | Нет | Deep-link `/start <user_id>` только при **первом** создании юзера. L1 = 20% от цены задания, L2 = 5% | **P1 юнит.** 25% поверх выплаты исполнителю при полной цепочке — закладывать в цену заказчику. Нет события `referral_join` в аналитике | `Referral`, `grant_task_completion_rewards` |
-| Модерация admin/manager | Только admin: pending → approved → paid / rejected | Двухступенчато: аккаунт/логин → отзыв. Статусы Attempt: `waiting_approval` → `login_screenshot` → `approved` → `review_submitted` → `completed` / `rejected` / `declined` / `canceled`. Есть очередь second-account | **P1 UX.** Исполнитель не видит очередь/SLA. Причины отказа есть в модели, но не всегда в человеческом тексте | `handlers/admin.py`, `handlers/manager.py` |
+| Модерация admin/manager | Только admin: pending → approved → paid / rejected | Двухступенчато: аккаунт/логин → отзыв. Статусы Attempt: `waiting_approval` → `login_screenshot` → `approved` → `review_submitted` → `completed` / `rejected` / `declined` / `canceled`. Есть очередь second-account | **P0 ops.** Хаб `admission` занижает (нет `login_screenshot`). Очереди `id DESC`. Исполнитель не видит SLA | `handlers/admin.py`, `handlers/manager.py` |
 | Broadcast / scheduler | Нет (в админке master кнопка «написать одному») | Админ: массовая + личная. Менеджер: личная. Scheduler: напоминание админу о проверке отзыва; напоминание исполнителю «можно снова» | **P1.** MemoryStorage + рестарт = потеря FSM рассылки. Нет `broadcast_click` | `services/review_scheduler.py`, `executor_repeat_reminder.py` |
 | FSM / storage | `MemoryStorage()` | То же `MemoryStorage()` | **P0 тех.** Рестарт/деплой рвёт: скрин, вывод, мастер создания задания | `main.py` обеих веток |
 | Подписка на канал | Нет | Gate перед заданиями: кнопка на `t.me/Jobinsidenews`, флаг `news_accepted=True` **без** `getChatMember` | **P2 доверие.** Самоподтверждение. Комментарий в модели честный: «не реальная проверка» | `handlers/user.py` ~345 |
@@ -69,12 +69,20 @@ Master-пайплайн короче и другой: обучение → ра�
 |---|---|---|---|
 | Выплаты/вывод | Есть, ручные | Очередь без SLA | Показать статус заявки + срок в кабинете |
 | Рефералка | L1 20% / L2 5% | Съедает маржу | Заложить 25% в оффер заказчику |
-| Модерация | Две ступени + second-acc | Тишина после сдачи | Статус + ETA |
+| Модерация | Две ступени + second-acc | Хаб врёт по допуску; тишина после сдачи | Inbox aged ASC; статус + ETA |
 | Broadcast/scheduler | Есть | FSM в памяти | Redis; не слать >1–2 unprompted/сутки |
 | Подписка на канал | Самоклик | Ложная уверенность | Честный copy или getChatMember |
 | Аналитика | CSV + хаб | Нет шагов юзера | EVENT_TAXONOMY в код |
 | Онбординг | Welcome + rules dump | Нет сегментации | /start: «Хочу задания» / «Я бизнес» |
 | Сайт | Нет | Нет B2B входа | LANDING_BRIEF |
+
+## Инкремент аудита 2026-08-24 H8 (~06:52 UTC)
+
+- `origin/patch-15` HEAD всё ещё `a768bf3`. Зоны выплат / рефералка / FSM / channel gate / CSV / сайт без изменения кода.
+- Inbox-факт: `moderation_hub_counts.admission` = только `waiting_approval`; живая `admin:admission_queue` = ещё `login_screenshot`. Сорт очередей `id DESC`. WD в хабе — шт, ₽ только в extras. `completed` ∧ ¬`balance_credited` (Q5) в хабе нет.
+- Prebuilt при `admin:allow` шлётся исполнителю; исчерпание текстов гасит `TaskItem` и может decline попытку.
+- `MemoryStorage` — deploy freeze, пока Q1–Q4 живые. Секрет rules.py не копировали.
+- Сайта нет. Код бота не меняли. Ритуал: `docs/ops/DAILY_INBOX.md`.
 
 ## Инкремент аудита 2026-08-24 H7 (~05:51 UTC)
 

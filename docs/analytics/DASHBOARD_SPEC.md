@@ -36,9 +36,10 @@
 | Take 24ч | `COUNT attempts WHERE created_at > now-24h` | нет |
 | Submit 24ч | `COUNT attempts WHERE submitted_at > now-24h` | нет |
 | Pass % 24ч | completed / (c+r) где `updated_at > now-24h` и status in (completed,rejected) | нет |
-| Queue aged | review_submitted и `submitted_at < now-SLA` | есть count без возраста |
-| WD pending | уже `pending_wd_count` + `pending_wd_sum` | да — это P0 касса |
-| Mgr unpaid | `awaiting_manager_payment` по snapshot | да, но спрятано под каждым менеджером |
+| Queue aged | review_submitted и `submitted_at < now-SLA` | есть count без возраста; сорт `id DESC` |
+| WD pending | уже `pending_wd_count` + `pending_wd_sum` | да в extras; в moderation hub только шт |
+| Mgr unpaid | `awaiting_manager_payment` по snapshot | **не в moderation hub** — inbox Q5 SQL |
+| Admission truth | waiting_approval + login_screenshot | хаб считает только первый |
 | Ref cost 7д | SUM l1+l2 / SUM task_reward за 7д | сейчас COUNT lifetime — **не показывать как ₽** |
 
 Красные линии назначить после первого факта, не выдумывать %. Гипотеза очереди: 24ч (помечать ASSUMPTION в UI, пока нет медианы).
@@ -56,8 +57,10 @@
 
 | Частота | Метрика | Формула / поле | Красная линия (назначить) |
 |---|---|---|---|
-| День | Queue aged | submitted_at > 24ч (гипотеза) | SQL в FUNNELS |
-| День | WD pending ₽ | sum pending | уже в extras |
+| День | Queue aged | submitted_at > 24ч (гипотеза) | SQL в FUNNELS / DAILY_INBOX |
+| День | WD pending ₽ | sum pending | extras, не хаб шт |
+| День | Admission truth | waiting_approval + login_screenshot | хаб занижает |
+| День | Mgr unpaid ₽ | completed ¬credited × price | snapshot / Q5 SQL |
 | День | Pass % 24ч | completed/(c+r) за сутки | нет в хабе |
 | День | Take / submit 24ч | attempts created / submitted_at | нет в хабе |
 | Неделя | Unbounded D7 proxy | took_within_7d / new | SQL; не news_accepted |

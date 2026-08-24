@@ -187,4 +187,4 @@ async def emit(session, name, user_id, **props):
 | CSV attempts | только `status=completed` + реквизиты. Нет view/take/fail |
 | CSV withdrawals | по created_at, все статусы периода |
 
-Daily inbox (OPS-01) можно собрать **сегодня** из этих полей + 4 SQL из FUNNELS. Event-таблица нужна для F1 (view) и F3 (D1/D7 по шагам).
+Daily inbox (OPS-01) = ритуал в `docs/ops/DAILY_INBOX.md`. Не доверять хабу `admission` (нет `login_screenshot`); Q5 mgr unpaid в хабе нет; очереди `id DESC`. Event-таблица нужна для F1 (view) и F3 (D1/D7 по шагам), не для утренней кассы.
