@@ -1,6 +1,6 @@
 # Job Inside — карта возможностей бота
 
-Аудит: 2026-08-24 00:23 UTC.  
+Аудит: 2026-08-24 00:23 UTC, дописка H2 00:53.  
 Два снимка кода: `origin/master` (эта рабочая копия) и `origin/patch-15` (продукт-of-record: роли, баланс, рефералка, scheduler, аналитика).  
 Сайта нет ни на одной ветке.
 
@@ -22,7 +22,7 @@
 | Broadcast / scheduler | Нет (в админке master кнопка «написать одному») | Админ: массовая + личная. Менеджер: личная. Scheduler: напоминание админу о проверке отзыва; напоминание исполнителю «можно снова» | **P1.** MemoryStorage + рестарт = потеря FSM рассылки. Нет `broadcast_click` | `services/review_scheduler.py`, `executor_repeat_reminder.py` |
 | FSM / storage | `MemoryStorage()` | То же `MemoryStorage()` | **P0 тех.** Рестарт/деплой рвёт: скрин, вывод, мастер создания задания | `main.py` обеих веток |
 | Подписка на канал | Нет | Gate перед заданиями: кнопка на `t.me/Jobinsidenews`, флаг `news_accepted=True` **без** `getChatMember` | **P2 доверие.** Самоподтверждение. Комментарий в модели честный: «не реальная проверка» | `handlers/user.py` ~345 |
-| Аналитика / CSV / метрики | `AdminAction` лог approve/reject/paid | Хаб аналитики, экспорт attempts/withdrawals CSV (7/30/90/custom), `/status`, статистика заданий по админу/менеджеру | **P1.** Это операционные отчёты, не event-stream шагов юзера. Нет taxonomy в коде | `handlers/admin_analytics.py` |
+| Аналитика / CSV / метрики | `AdminAction` лог approve/reject/paid | Хаб: lifetime totals, очереди без возраста, CSV **только completed** + WD, `/status`, статистика заданий. `referral_payout_ops_total` = COUNT не ₽ | **P1.** Нет event-stream. F1 (view/start) не восстановить SQL. Флаги rules/news без timestamp | `handlers/admin_analytics.py`, `StatsRepository` |
 | Онбординг / тексты / клавиатуры | 4 шага TrainingMessage + «Взять задание» | Welcome из `BotSetting`, правила (middleware), reply-меню 5 кнопок, карточка задания без инструкции до «Начать» | **P0 UX.** `/start` не сегментирует исполнитель/заказчик. Правила смешивают оффер, рефералку и промо прокси | см. `BOT_UX_VISION.md` |
 | Роли | admin / user | user / admin (`ADMIN_IDS`) / manager (`MANAGER_IDS`) + block | Ок | Middlewares: admin, manager, blocked, rules, staff |
 | Площадки | yandex, 2gis + кулдауны 24ч / 2ч | Платформа — свободная строка; мин. цены default: Яндекс 130 / Google 35 / 2ГИС 12 | ASSUMPTION: это дефолты кода, не факт продаж | `BotSetting` |
@@ -79,3 +79,11 @@ Master-пайплайн короче и другой: обучение → ра�
 ## Как обновлять этот файл
 
 Каждый hourly run: 5–10 строк «что изменилось в коде / что осталось». Не переписывать таблицу с нуля, если зоны те же.
+
+## Инкремент аудита 2026-08-24 H2
+
+- `patch-15` сдвинулся: `chore: add Cursor cloud environment` — на продукт бота не влияет.
+- Аналитика прочитана целиком (`admin_analytics.py` 507 строк + `StatsRepository`): daily-воронки нет, есть касса WD pending и хаб модерации (admission / reviews / secacc / WD).
+- Критичный факт для денег: менеджерский `completed` ≠ `balance_credited`. Реферал 20/5 в `grant_task_completion_rewards` — после `review_ok` (админ) или `mgr_outpay`.
+- `/menu` = welcome без реферала и без нового user-create path на deep-link.
+- Код бота не меняли. Карта вставок событий: `docs/analytics/EVENT_TAXONOMY.md`.

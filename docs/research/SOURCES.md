@@ -11,3 +11,11 @@ Append-only. Каждый run — 1–3 ссылки с датой и зачем
 | 2026-08-24 | Кнопки и FSM в Telegram | https://sudonull.com/ux-telegram-bots-buttons-and-fsm-on-aiogram | Reply = постоянное меню; inline = шаг сценария; 3–4 кнопки на карточке; сценарии > команд |
 | 2026-08-24 | Marketplace T&S: SLA, audit trail, retention после модерации | https://gruv.ai/blog/trust-safety-program-contractor-marketplace | SLA по severity, не один срок на всё; каждое решение = case id + причина + уведомление; мерить 30d retention прошедших/отклонённых |
 | 2026-08-24 | Marketplace playbook: очередь по риску, видимый SLA | https://techvinta.com/blog/marketplace-trust-and-safety-playbook | Новички всегда в ручную очередь; обе стороны видят таймер; автоматизация триит, не судит |
+
+## 2026-08-24 ~00:53 UTC — H2 Analytics events
+
+| Дата | Тема | URL | Что взяли для Job Inside |
+|---|---|---|---|
+| 2026-08-24 | Event taxonomy: object-action, варианты в properties | https://productanalyticshandbook.com/blog/event-taxonomy-object-action/ | Не плодить `*_yandex`; pass/fail оставляем раздельно (разные решения очереди); id не в имени |
+| 2026-08-24 | Tracking plan до инструментации; окно воронки 7д | https://getfairview.com/blog/product-analytics-setup-guide | Сначала 3 события активации; окно F1 = 7 суток; enum-свойства |
+| 2026-08-24 | Marketplace retention: supply ≠ demand; N-day vs unbounded | https://themarketplaceguide.com/articles/cohort-retention-is-a-marketplace-health-signal-heres-how-to-read-it-correctly/ | Исполнитель и менеджер — разные «active»; гиг → unbounded D7; N-day только диагноз онбординга |

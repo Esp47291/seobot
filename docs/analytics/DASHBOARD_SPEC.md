@@ -26,17 +26,38 @@
 | Топ причин reject | Copy + инструкция |
 | Задания без слотов / exhausted texts | Снабжение |
 
+## SQL-черновики daily (вклеить в админ-статы, не ждать Mixpanel)
+
+Сейчас `admin.py:stats` — lifetime totals. Для «5 минут утром» нужны **срезы за 24ч / очередь с возрастом**. Ниже — что дописать в `StatsRepository` днём (issue, не ночной рефакторинг).
+
+| Виджет | Черновик | Уже близко в коде |
+|---|---|---|
+| Новые | `COUNT users WHERE registered_at > now-24h` | есть только `users_new_week` |
+| Take 24ч | `COUNT attempts WHERE created_at > now-24h` | нет |
+| Submit 24ч | `COUNT attempts WHERE submitted_at > now-24h` | нет |
+| Pass % 24ч | completed / (c+r) где `updated_at > now-24h` и status in (completed,rejected) | нет |
+| Queue aged | review_submitted и `submitted_at < now-SLA` | есть count без возраста |
+| WD pending | уже `pending_wd_count` + `pending_wd_sum` | да — это P0 касса |
+| Mgr unpaid | `awaiting_manager_payment` по snapshot | да, но спрятано под каждым менеджером |
+| Ref cost 7д | SUM l1+l2 / SUM task_reward за 7д | сейчас COUNT lifetime — **не показывать как ₽** |
+
+Красные линии назначить после первого факта, не выдумывать %. Гипотеза очереди: 24ч (помечать ASSUMPTION в UI, пока нет медианы).
+
 ## Чего не показывать как «правду»
 
 - Подписки на канал по `news_accepted` — это клик, не membership.
 - «Активные пользователи» без определения (нужен: 1+ proof_submit за 7д — предложить).
+- `referral_payout_ops_total` как «стоимость рефералки».
+- `tasks_completed` lifetime как «сегодня сделали».
+- CSV completed как воронка (там нет take/fail/view).
 
 ## MIRO-READY
 
 | Частота | Метрика | Формула / поле | Красная линия (назначить) |
 |---|---|---|---|
-| День | Queue aged | submitted_at > SLA | SLA нет — взять 24ч как гипотезу |
-| День | WD pending ₽ | sum pending | касса |
-| День | Pass % | completed/(c+r) | расследовать < ASSUMPTION после факта |
-| Неделя | D7 return | events | нет данных |
-| Неделя | Ref cost | ref ops / task_reward | если > запаса в цене заказчика |
+| День | Queue aged | submitted_at > 24ч (гипотеза) | SQL в FUNNELS |
+| День | WD pending ₽ | sum pending | уже в extras |
+| День | Pass % 24ч | completed/(c+r) за сутки | нет в хабе |
+| День | Take / submit 24ч | attempts created / submitted_at | нет в хабе |
+| Неделя | Unbounded D7 proxy | took_within_7d / new | SQL; не news_accepted |
+| Неделя | Ref cost | SUM l1+l2 / SUM task_reward | не COUNT ops |

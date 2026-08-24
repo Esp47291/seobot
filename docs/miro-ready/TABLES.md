@@ -20,10 +20,10 @@
 
 | Воронка | Шаги | Ключевая конверсия | Источник факта |
 |---|---|---|---|
-| F1 Activation | start→rules→view→take→submit | submit / start(new) | events; пока users+attempts |
-| F2 Money | submit→pass→wd_paid | pass%; time-to-pay | attempts, withdrawals |
-| F3 Retention | D1/D7; return after fail | D7 | нужно events |
-| F4 Referral | join→qualified→reward | qualified/join; ref cost% | referrals + ops |
+| F1 Activation | start→rules→view→take→submit (окно 7д) | submit_7d / start(new) | SQL take/submit; view/start — events |
+| F2 Money | submit→pass→credited→wd_paid | pass%; paid-out%; t-pay | attempts.balance_credited + WD |
+| F3 Retention | supply vs demand; unbounded D7 | took_within_7d | SQL proxy; N-day только онбординг |
+| F4 Referral | join→qualified→reward | qualified/join; SUM ref / SUM reward | не COUNT из админки |
 | F5 B2B | lead→live task | live/lead | нет сущности |
 
 ## 30-day plan
