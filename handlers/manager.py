@@ -25,6 +25,15 @@ from utils.fsm import ManagerFSM
 router = Router(name="manager")
 
 
+def _is_image_document_for_preb(doc) -> bool:
+    """
+    В менеджерском режиме готовых материалов принимаем ЛЮБОЙ document как фото.
+
+    Это сделано специально для поддержки Telegram Desktop / Ctrl+V, где JPG/PNG
+    часто помечаются как application/octet-stream и/или без расширения.
+    """
+    return bool(doc)
+
 @router.message(Command("manager"))
 async def cmd_manager(message: Message):
     await message.answer("Панель менеджера:", reply_markup=manager_main())
@@ -380,6 +389,7 @@ async def mgr_tasks_add_instruction(message: Message, state: FSMContext, **data)
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Готовые тексты", callback_data="mgr:tasks_prebuilt_yes")],
+                [InlineKeyboardButton(text="✅ Готовые тексты с фото", callback_data="mgr:tasks_prebuilt_yes_photo")],
                 [InlineKeyboardButton(text="⏭️ Без готовых текстов", callback_data="mgr:tasks_prebuilt_no")],
             ]
         ),
@@ -394,6 +404,25 @@ async def mgr_tasks_prebuilt_yes(cb: CallbackQuery, state: FSMContext):
     await cb.message.answer(
         "Шаг 6/8.\nОтправляйте готовые тексты по очереди: 1 текст = 1 сообщение.\n"
         "Каждый текст будет выдан только одному исполнителю.\n\n"
+        "Когда закончите — нажмите «✅ Готово».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
+        ),
+    )
+
+
+@router.callback_query(F.data == "mgr:tasks_prebuilt_yes_photo")
+async def mgr_tasks_prebuilt_yes_photo(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await state.update_data(prebuilt_texts=[])
+    await state.set_state(ManagerFSM.waiting_task_prebuilt_texts_with_photo)
+    await cb.message.answer(
+        "Шаг 6/8.\nОтправляйте материалы по очереди: 1 сообщение = 1 готовый вариант для отзыва.\n\n"
+        "Можно так:\n"
+        "• фото с подписью (текстом)\n"
+        "• просто фото\n"
+        "• просто текст\n\n"
+        "Каждый вариант будет выдан только одному исполнителю.\n"
         "Когда закончите — нажмите «✅ Готово».",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
@@ -444,13 +473,67 @@ async def mgr_tasks_prebuilt_texts_collect(message: Message, state: FSMContext, 
     )
 
 
+@router.message(ManagerFSM.waiting_task_prebuilt_texts_with_photo)
+async def mgr_tasks_prebuilt_texts_with_photo_collect_any(message: Message, state: FSMContext, **data):
+    """
+    Общий обработчик для режима "готовые тексты с фото" у менеджера.
+    Telegram иногда присылает картинку как Document, иногда как Photo — либо в нестандартном виде при paste.
+    Этот хендлер гарантирует ответ и корректный сбор материалов.
+    """
+    # Общий /cancel (на случай, если пользователь введёт его текстом)
+    if (message.text or "").strip() == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=manager_main())
+        return
+
+    d = await state.get_data()
+    texts = list(d.get("prebuilt_texts") or [])
+
+    caption = (message.caption or "").strip()
+    if caption == "/cancel":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=manager_main())
+        return
+
+    item: dict[str, str] | None = None
+    if message.text:
+        raw = message.text.strip()
+        if raw:
+            item = {"text": raw}
+    elif message.photo:
+        item = {"media_type": "photo", "media_file_id": message.photo[-1].file_id}
+        if caption:
+            item["text"] = caption
+    elif message.document:
+        if not _is_image_document_for_preb(message.document):
+            await message.answer("Пришлите картинку (PNG/JPG) либо текст.")
+            return
+        item = {"media_type": "document", "media_file_id": message.document.file_id}
+        if caption:
+            item["text"] = caption
+
+    if not item:
+        await message.answer("Пришлите картинку (PNG/JPG) или текст для готового варианта.")
+        return
+
+    texts.append(item)
+    await state.update_data(prebuilt_texts=texts)
+
+    await message.answer(
+        f"✅ Материал добавлен (всего: {len(texts)}). Отправьте следующий вариант или нажмите «✅ Готово».",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✅ Готово", callback_data="mgr:tasks_prebuilt_done")]]
+        ),
+    )
+
+
 @router.callback_query(F.data == "mgr:tasks_prebuilt_done")
 async def mgr_tasks_prebuilt_done(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     d = await state.get_data()
     texts = list(d.get("prebuilt_texts") or [])
     if not texts:
-        await cb.message.answer("Сначала добавьте хотя бы 1 готовый текст.")
+        await cb.message.answer("Сначала добавьте хотя бы 1 готовый вариант (текст/фото).")
         return
 
     await state.set_state(ManagerFSM.waiting_task_prebuilt_mode)

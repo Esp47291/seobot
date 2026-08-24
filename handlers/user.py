@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Пользовательские хендлеры SeoJob / Отзовик."""
+import re
 from decimal import Decimal
 
 from aiogram import F, Router
@@ -7,7 +8,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Document, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from config import ADMIN_IDS, SUPPORT_URL
+from config import ADMIN_IDS, MANAGER_IDS, SUPPORT_URL
 from database import (
     AttemptRepository,
     BalanceRepository,
@@ -20,6 +21,8 @@ from database import (
 )
 from keyboards.admin import moderation_kb, second_account_moderation_kb, withdraw_kb
 from keyboards.user import (
+    cabinet_back_kb,
+    cabinet_reviews_nav_kb,
     cancel_attempt_kb,
     main_menu,
     operations_history_kb,
@@ -28,6 +31,7 @@ from keyboards.user import (
     task_venue_cities_kb,
     tasks_all_done_kb,
 )
+from utils.telegram_safe import send_screenshot_or_document
 from services.executor_repeat_reminder import schedule_executor_repeat_reminder
 from services.review_admin_instant import notify_admins_review_screenshot_received
 from utils.fsm import UserFSM
@@ -58,6 +62,64 @@ router = Router(name="user")
 
 # Маркер в venue_pick_list: задания с пустым venue_city (старые карточки)
 TASK_VENUE_EMPTY = "__TASK_VENUE_EMPTY__"
+
+_REVIEW_HISTORY_PAGE_SIZE = 5
+_REVIEW_HISTORY_MAX = 30
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+
+def _extract_first_url(text: str | None) -> str | None:
+    if not text:
+        return None
+    m = _URL_RE.search(text)
+    if not m:
+        return None
+    return m.group(0).rstrip(").,]>\"'")
+
+
+def _review_status_line(attempt) -> str:
+    st = attempt.status or ""
+    if st == "completed":
+        return "✅ Отзыв принят"
+    if st == "rejected":
+        line = "❌ Отзыв отклонён"
+        reason = (getattr(attempt, "reject_reason", None) or "").strip()
+        if reason:
+            line += f"\nПричина: {reason}"
+        return line
+    if st == "review_submitted":
+        return "⏸ Отзыв на проверке"
+    return f"Статус: {st}"
+
+
+def _format_user_review_caption(attempt, task) -> str:
+    platform = getattr(task, "platform", None) if task else None
+    venue_city = getattr(task, "venue_city", None) if task else None
+    sphere = getattr(task, "sphere", None) if task else None
+    try:
+        price = float(getattr(task, "price", 0) or 0) if task else 0.0
+    except Exception:
+        price = 0.0
+    venue_url = _extract_first_url(getattr(task, "instruction_url", None) if task else None)
+    submitted_line = "—"
+    if getattr(attempt, "submitted_at", None):
+        submitted_line = attempt.submitted_at.strftime("%d.%m.%Y %H:%M") + " UTC"
+    lines = [
+        _review_status_line(attempt),
+        "",
+        f"🧾 Заявка #{attempt.id}",
+        f"Дата отправки скрина: {submitted_line}",
+        f"Задание: {platform or '—'} | город орг.: {(venue_city or '—').strip() if venue_city else '—'}",
+        f"Сфера: {sphere or '—'} | Вознаграждение: {price:.2f} руб.",
+    ]
+    if venue_url:
+        lines.append(f"🔗 Ссылка: {venue_url}")
+    if attempt.status == "completed" and getattr(attempt, "updated_at", None):
+        lines.append(f"Дата решения: {attempt.updated_at.strftime('%d.%m.%Y %H:%M')} UTC")
+    text = "\n".join(lines)
+    if len(text) > 1000:
+        text = text[:997] + "…"
+    return text
 
 
 def _rotate_tasks_round_robin(tasks_sorted: list, last_started_task_id: int | None) -> list:
@@ -542,9 +604,13 @@ async def start_task(cb: CallbackQuery, state: FSMContext, **data):
         if active.status == "approved":
             await state.set_state(UserFSM.waiting_review_screenshot)
             await state.update_data(attempt_id=active.id)
+            venue_link = (getattr(task, "venue_link", None) or "").strip()
+            venue_line = f"\n🔗 Ссылка: {venue_link}\n" if venue_link else "\n"
             await cb.message.answer(
-                "Продолжите это задание: пришлите в чат скриншот опубликованного отзыва.\n\n"
-                "Реквизиты для выплаты должны быть указаны в «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
+                f"✅ Вы допущены! Ваша инструкция: {task.instruction_url}\n"
+                f"{venue_line}\n"
+                "✍️ Этап 2/3: Опубликуйте отзыв по инструкции и пришлите сюда скриншот готового отзыва.\n\n"
+                "❗️ Перед отправкой скрина укажите реквизиты для выплаты: «💰 Личный кабинет / Баланс» → «✏️ Редактировать реквизиты»."
             )
             return
         if active.status in ("login_screenshot", "waiting_approval"):
@@ -637,17 +703,6 @@ async def got_account_screenshot(message: Message, state: FSMContext, **data):
     await _process_account_screenshot_file(message, state, session, file_id, photo_for_review_fallback=file_id)
 
 
-@router.message(UserFSM.waiting_account_screenshot, F.document)
-async def got_account_screenshot_document(message: Message, state: FSMContext, **data):
-    if not _is_image_document(message.document):
-        await message.answer("Пришлите скрин профиля фото или файлом изображения (PNG, JPG и т.д.).")
-        return
-    session = data["session"]
-    await _process_account_screenshot_file(
-        message, state, session, message.document.file_id, photo_for_review_fallback=None
-    )
-
-
 @router.message(UserFSM.waiting_review_screenshot, F.photo)
 async def got_review_screenshot(message: Message, state: FSMContext, **data):
     session = data["session"]
@@ -665,11 +720,15 @@ async def profile_requisites_no_photo(message: Message):
     await message.answer("Пришлите реквизиты одним текстовым сообщением, без фото.")
 
 
-@router.message(F.photo)
+def _allow_executor_fallback_media(message: Message) -> bool:
+    """Не перехватывать фото/файлы админов и менеджеров — их обрабатывают другие роутеры."""
+    uid = message.from_user.id
+    return uid not in ADMIN_IDS and uid not in MANAGER_IDS
+
+
+@router.message(F.photo, _allow_executor_fallback_media)
 async def got_review_screenshot_without_state(message: Message, state: FSMContext, **data):
     """Если FSM сбросился, но есть одобренная попытка — принимаем скрин отзыва."""
-    if await state.get_state() is not None:
-        return
     session = data["session"]
     attempt_repo = AttemptRepository(session)
     attempt = await attempt_repo.get_last_by_user_status(message.from_user.id, "approved")
@@ -692,23 +751,90 @@ async def cancel_attempt(cb: CallbackQuery, state: FSMContext, **data):
     await cb.message.answer("Попытка отменена.", reply_markup=main_menu())
 
 
-@router.message(F.text == "💰 Личный кабинет / Баланс")
-async def cabinet(message: Message, **data):
-    session = data["session"]
+async def _cabinet_summary_text(session, user_id: int) -> str:
     user_repo = UserRepository(session)
     attempt_repo = AttemptRepository(session)
-    user = await user_repo.get_by_user_id(message.from_user.id)
-    completed = await attempt_repo.completed_count_by_user(message.from_user.id)
+    user = await user_repo.get_by_user_id(user_id)
+    if not user:
+        return "Профиль не найден."
+    completed = await attempt_repo.completed_count_by_user(user_id)
     pr = (user.payout_requisites or "").strip()
     pr_line = pr if pr else "не указаны (нужны для выплат за задания)"
-    await message.answer(
+    return (
         f"Ваш ID: {user.user_id}\n"
         f"Username: @{user.username or '-'}\n"
         f"Баланс: {float(user.balance):.2f} руб.\n"
         f"Выполнено заданий: {completed}\n\n"
-        f"Реквизиты для выплат по заданиям:\n{pr_line}",
-        reply_markup=operations_history_kb(),
+        f"Реквизиты для выплат по заданиям:\n{pr_line}"
     )
+
+
+@router.message(F.text == "💰 Личный кабинет / Баланс")
+async def cabinet(message: Message, **data):
+    session = data["session"]
+    text = await _cabinet_summary_text(session, message.from_user.id)
+    await message.answer(text, reply_markup=operations_history_kb())
+
+
+@router.callback_query(F.data == "cabinet_back")
+async def cabinet_back(cb: CallbackQuery, **data):
+    await cb.answer()
+    session = data["session"]
+    text = await _cabinet_summary_text(session, cb.from_user.id)
+    await cb.message.answer(text, reply_markup=operations_history_kb())
+
+
+@router.callback_query(F.data == "cabinet_reviews")
+async def cabinet_reviews(cb: CallbackQuery, **data):
+    await cb.answer()
+    await _show_cabinet_review_history(cb, page=0, **data)
+
+
+@router.callback_query(F.data.regexp(r"^cabinet_reviews:\d+$"))
+async def cabinet_reviews_page(cb: CallbackQuery, **data):
+    await cb.answer()
+    page = int(cb.data.split(":")[-1])
+    await _show_cabinet_review_history(cb, page=page, **data)
+
+
+async def _show_cabinet_review_history(cb: CallbackQuery, page: int, **data) -> None:
+    session = data["session"]
+    attempt_repo = AttemptRepository(session)
+    task_repo = TaskItemRepository(session)
+    attempts = await attempt_repo.list_user_review_history(cb.from_user.id, limit=_REVIEW_HISTORY_MAX)
+    if not attempts:
+        await cb.message.answer(
+            "Вы ещё не отправляли скриншоты отзывов на проверку.",
+            reply_markup=cabinet_back_kb(),
+        )
+        return
+
+    total_pages = max(1, (len(attempts) + _REVIEW_HISTORY_PAGE_SIZE - 1) // _REVIEW_HISTORY_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    chunk = attempts[page * _REVIEW_HISTORY_PAGE_SIZE : (page + 1) * _REVIEW_HISTORY_PAGE_SIZE]
+
+    header = (
+        f"📝 <b>История ваших отзывов</b>\n"
+        f"Показано {len(chunk)} из {len(attempts)} (стр. {page + 1}/{total_pages})\n\n"
+        "✅ — принят · ❌ — отклонён · ⏸ — на проверке"
+    )
+    await cb.message.answer(header, parse_mode="HTML", reply_markup=cabinet_reviews_nav_kb(page, total_pages))
+
+    for at in chunk:
+        task = await task_repo.get_by_id(at.task_item_id)
+        caption = _format_user_review_caption(at, task)
+        file_id = (getattr(at, "review_screenshot_file_id", None) or "").strip()
+        if file_id:
+            await send_screenshot_or_document(
+                cb.bot,
+                cb.message.chat.id,
+                file_id,
+                caption=caption,
+            )
+        else:
+            await cb.message.answer(caption)
+
+    await cb.message.answer("◀ Вернуться в личный кабинет:", reply_markup=cabinet_back_kb())
 
 
 @router.callback_query(F.data == "cabinet_edit_requisites")

@@ -64,8 +64,32 @@ def cancel_attempt_kb() -> InlineKeyboardMarkup:
 def operations_history_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="📝 История отзывов", callback_data="cabinet_reviews")],
             [InlineKeyboardButton(text="📊 История операций", callback_data="cabinet_history")],
             [InlineKeyboardButton(text="✏️ Редактировать реквизиты", callback_data="cabinet_edit_requisites")],
             [InlineKeyboardButton(text="◀️ В главное меню", callback_data="to_menu")],
         ]
     )
+
+
+def cabinet_back_kb() -> InlineKeyboardMarkup:
+    """Назад в экран личного кабинета (баланс и кнопки)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="◀ Назад", callback_data="cabinet_back")],
+        ]
+    )
+
+
+def cabinet_reviews_nav_kb(page: int, total_pages: int) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀ Раньше", callback_data=f"cabinet_reviews:{page - 1}"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton(text="Позже ▶", callback_data=f"cabinet_reviews:{page + 1}"))
+        if nav:
+            rows.append(nav)
+    rows.append([InlineKeyboardButton(text="◀ Назад", callback_data="cabinet_back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
