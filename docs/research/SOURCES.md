@@ -1,3 +1,11 @@
+## 2026-08-24 ~07:51 UTC — H1 Product/UX (круг 2)
+
+| Дата | Тема | URL | Что взяли для Job Inside |
+|---|---|---|---|
+| 2026-08-24 | Фейковый %/countdown ломает доверие; число = обещание; именовать реальные стадии | https://anmshpndy.com/cases/fake-loading-progress/ | Не «5 мин» и не бар. Стадия Attempt, не прогресс |
+| 2026-08-24 | Ожидание в темноте: стадия, уверенность, next move, fallback; диапазон честнее точного времени | https://unicornclub.dev/issues/2026-06-23-your-product-is-making-people-wait-in-the-dark/ | 6 полей UX-03; «рабочие часы»; не писать в поддержку через 5 мин |
+| 2026-08-24 | Маркетплейс: двусмысленный статус заказа = тикеты «что с моим заказом» | https://www.lowcode.agency/blog/marketplace-ui-ux-design-best-practices-full-guide | id+стадия в ЛС и кабинете, чтобы не эскалировать в саппорт |
+
 ## 2026-08-24 ~06:52 UTC — H8 Risks&ops
 
 | Дата | Тема | URL | Что взяли для Job Inside |

@@ -1,13 +1,13 @@
 # Next hour
 
-Тема: **H1 Product/UX** (второй круг ротации).
+Тема: **H2 Analytics events** (второй круг ротации).
 
-1. Прочитать Memories + этот файл + DAILY_LATEST + PRIORITY_BACKLOG + `DAILY_INBOX.md`.  
-2. Не переписывать COPY / ACQUISITION / UNIT / SCRIPTS / LANDING / TAXONOMY / UX vision / RISKS / DAILY_INBOX с нуля.  
-3. Research 1–2: статусы задач и честный ETA в ботах (не фейковый таймер).  
-4. Углубить слабое: **UX-03** в `BOT_UX_VISION.md` и/или `USER_JOURNEY.md` — после скрина: attempt id + «обычно в рабочие часы»; ETA из S2 inbox, не «5 минут»; не «оплачен» до credited.  
-5. Связать с H8: хаб врёт → исполнителю не обещать очередь, которой админ не видит.  
-6. Обновить DAILY (топ-5: UX-01..03, TECH-01, OPS-01 field), NOTES, backlog.  
+1. Прочитать Memories + этот файл + DAILY_LATEST + PRIORITY_BACKLOG + `EVENT_TAXONOMY.md` + `FUNNELS.md`.  
+2. Не переписывать TAXONOMY / UX vision / COPY / ACQUISITION / UNIT / SCRIPTS / LANDING / RISKS / DAILY_INBOX с нуля.  
+3. Research 1–2: drop-off на ожидании модерации / time-to-moderation как метрика, не выдуманный %.  
+4. Углубить слабое: F2 окно **submit → pass** стык с UX-03 — как считать `t_mod`, что не мешать с WD, как не принять хаб-count за воронку.  
+5. Связать с H1 круг 2: `proof_submit` = старт ожидания; отдельный `wait_ack` в Phase 1 не плодить.  
+6. Обновить DAILY (топ-5 без UX-03 как «надо придумать»), NOTES, backlog.  
 7. Коммит в ту же `docs/night-ops-20260824-00`. PR владелец открывает сам (gh write нет).
 
-Не делать: вёрстку сайта, массовый рефакторинг бота, второй PR, правки `rules.py`, копипаст секрета, «схемы чтобы площадка не заметила», автовыплаты.
+Не делать: вёрстку сайта, массовый рефакторинг бота, второй PR, правки `rules.py`, копипаст секрета, «схемы чтобы площадка не заметила», автовыплаты, код 3 логов ночью.
