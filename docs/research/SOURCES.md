@@ -1,3 +1,12 @@
+## 2026-08-24 ~05:51 UTC — H7 Copy system
+
+| Дата | Тема | URL | Что взяли для Job Inside |
+|---|---|---|---|
+| 2026-08-24 | Голос стабильный, тон по контексту; ошибка — факт+действие, без «!» и юмора | https://skills.smoothui.dev/docs/copy | Таблица тон×слот: отказ/деньги сдержанные; успех баланса не «ура» |
+| 2026-08-24 | Fintech: неясный статус денег = тикет; ETA > «мы видим» | https://elovebook.com/designing-for-trust-how-ux-writing-reduces-friction-in-fintech-and-payment-journeys/ | WD и модерация: id + рабочие часы; «принят и оплачен» врёт до credited |
+| 2026-08-24 | NN/g: trustworthiness сильнее friendliness для желания пользоваться | https://www.nngroup.com/articles/tone-voice-users/ | Не смягчать RULES «дружелюбной накруткой» — честный процесс |
+| 2026-08-24 | Maps UGC: incentive и диктовка содержания запрещены | https://support.google.com/contributionpolicy/answer/16597558?hl=en | C-15: не слать prebuilt текст исполнителю; публично не «платим за отзывы» |
+
 ## 2026-08-24 ~04:51 UTC — H6 Acquisition
 
 | Дата | Тема | URL | Что взяли для Job Inside |
