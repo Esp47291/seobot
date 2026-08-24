@@ -12,6 +12,13 @@ Append-only. Каждый run — 1–3 ссылки с датой и зачем
 | 2026-08-24 | Marketplace T&S: SLA, audit trail, retention после модерации | https://gruv.ai/blog/trust-safety-program-contractor-marketplace | SLA по severity, не один срок на всё; каждое решение = case id + причина + уведомление; мерить 30d retention прошедших/отклонённых |
 | 2026-08-24 | Marketplace playbook: очередь по риску, видимый SLA | https://techvinta.com/blog/marketplace-trust-and-safety-playbook | Новички всегда в ручную очередь; обе стороны видят таймер; автоматизация триит, не судит |
 
+## 2026-08-24 ~02:51 UTC — H4 Sales scripts
+
+| Дата | Тема | URL | Что взяли для Job Inside |
+|---|---|---|---|
+| 2026-08-24 | Холодный Telegram DM: коротко, без ссылки, 1 вопрос | https://crmchat.ai/blog/telegram-outreach-copy-that-gets-replies | Скрипт 1 ужат; URL сайта не в первом касании; inbound не переспрашивает форму |
+| 2026-08-24 | Google Maps UGC: запрет оплаты за отзыв и диктовки текста | https://support.google.com/contributionpolicy/answer/7400114?hl=en | Скрипты 14–16: не спорить про «накрутку», не слать шаблон отзыва |
+
 ## 2026-08-24 ~01:49 UTC — H3 Website landing
 
 | Дата | Тема | URL | Что взяли для Job Inside |

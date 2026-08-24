@@ -78,6 +78,16 @@ proof_submit(review) → moderation_pass(review) → balance_update(task_reward)
 `biz_lead → qualify → first_brief → first_task_live → repeat_order`  
 Сейчас воронки нет — нет сайта и сущности «заказчик».
 
+Qualify (H4, руками в чате менеджера, пока нет CRM):
+
+| Исход | Когда | Дальше |
+|---|---|---|
+| `take` | Q3 = процесс, Q4 = честный темп, город слотопригоден | бриф → `TaskItem` |
+| `no_take` | рейтинг-квота, готовый текст, без визита, «чтобы не заметили» | скрипт 16, не считать «проигранной ценой» |
+| `hold` | город без supply | **ASSUMPTION** не обещать дату; не создавать слот «в никуда» |
+
+Формула когда появится таблица: `take / biz_lead`, `live_task / take`. Не делить live на все лиды вместе с no_take — иначе «конверсия продаж» врёт.
+
 ## Операторские (ежедневно)
 
 - Очередь: count review_submitted + waiting_approval старше SLA (SLA ещё не задан — назначить).
@@ -182,4 +192,4 @@ WHERE status='review_submitted'
 | F2 Money | submit→pass→credited→wd_paid | pass%; paid-out%; t-pay | attempts + balance_credited |
 | F3 Retention | supply vs demand; unbounded D7 | took_within_7d; D7 events | SQL proxy / events |
 | F4 Referral | join→qualified→reward | qualified/join; ref_cost/payout | SUM ops, не COUNT |
-| F5 B2B | lead→live task | live / lead | нет |
+| F5 B2B | lead→qualify(take/no_take/hold)→live task | take / biz_lead; live / take | нет сущности; qualify руками |
